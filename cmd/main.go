@@ -1,7 +1,20 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jateen67/kv/internal"
+)
 
 func main() {
-	fmt.Println("hello")
+	store, _ := internal.NewDiskStore("books.db")
+	err := store.Set("othello", "shakespeare")
+	if err != nil {
+		fmt.Println(err)
+	}
+	author := store.Get("othello")
+	fmt.Println(author)
+	store.Delete("othello")
+	author = store.Get("othello")
+	fmt.Println(author)
 }
