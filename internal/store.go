@@ -1,7 +1,7 @@
 package internal
 
 type Store interface {
-	Put(key string, value string)
 	Get(key string) string
+	Set(key string, value string)
 	Close() bool
 }
