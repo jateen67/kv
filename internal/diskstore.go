@@ -67,20 +67,24 @@ func (ds *DiskStore) Get(key string) string {
 	// move the current pointer to the right offset
 	ds.file.Seek(int64(kEntry.position), SEEK)
 	data := make([]byte, kEntry.totalSize)
-	// TODO: handle errors
 	_, err := io.ReadFull(ds.file, data)
 	if err != nil {
-		panic("read error")
+		panic(fmt.Sprintf("get() read error: %s", err))
 	}
 	_, _, value := decodeKV(data)
 	return value
 }
 
-func (ds *DiskStore) Set(key string, value string) {
+func (ds *DiskStore) Set(key string, value string) error {
 	_, ok := ds.keyDir[key]
 	if ok {
-		fmt.Println("key already set")
-		return
+		return errors.New("set() error: key already set")
+	}
+	if len(key) == 0 {
+		return errors.New("set() error: key empty")
+	}
+	if len(value) == 0 {
+		return errors.New("set() error: value empty")
 	}
 	// The steps to save a KV to disk is simple:
 	// 1. Encode the KV into bytes
@@ -90,14 +94,24 @@ func (ds *DiskStore) Set(key string, value string) {
 	size, data := encodeKV(timestamp, key, value)
 	// file consistency is hard (comp310)
 	if _, err := ds.file.Write(data); err != nil {
-		panic(err)
+		panic(fmt.Sprintf("set() write error: %s", err))
 	}
 	// ensure our writes are actually persisted to the disk
 	if err := ds.file.Sync(); err != nil {
-		panic(err)
+		panic(fmt.Sprintf("get() write sync error: %s", err))
 	}
 	ds.keyDir[key] = NewKeyEntry(timestamp, uint32(ds.writePosition), uint32(size))
 	ds.writePosition += size
+	return nil
+}
+
+func (ds *DiskStore) Close() bool {
+	// important to actually write to disk through Sync() first
+	ds.file.Sync()
+	if err := ds.file.Close(); err != nil {
+		return false
+	}
+	return true
 }
 
 func (ds *DiskStore) initKeyDir(existingFile string) error {
@@ -115,22 +129,19 @@ func (ds *DiskStore) initKeyDir(existingFile string) error {
 		if err == io.EOF {
 			break
 		}
-		// TODO: handle errors
 		if err != nil {
-			break
+			panic(fmt.Sprintf("initKeyDir() read header error: %s", err))
 		}
 		timestamp, keySize, valueSize := decodeHeader(header)
 		key := make([]byte, keySize)
 		value := make([]byte, valueSize)
 		_, err = io.ReadFull(file, key)
-		// TODO: handle errors
 		if err != nil {
-			break
+			panic(fmt.Sprintf("initKeyDir() read key error: %s", err))
 		}
 		_, err = io.ReadFull(file, value)
-		// TODO: handle errors
 		if err != nil {
-			break
+			panic(fmt.Sprintf("initKeyDir() read value error: %s", err))
 		}
 		totalSize := headerSize + keySize + valueSize
 		ds.keyDir[string(key)] = NewKeyEntry(timestamp, uint32(ds.writePosition), totalSize)
