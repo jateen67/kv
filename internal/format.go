@@ -7,11 +7,9 @@ import (
 )
 
 /*
-The format for each key-value on disk is as follows:
 -------------------------------------------------
-| timestamp | key_size | value_size | key | value |
+| checksum | tombstone | timestamp | key_size | value_size | key | value |
 -------------------------------------------------
-timestamp, key_size, value_size form the header of the entry and each of these must be 4 bytes at most
 */
 const headerSize = 17
 

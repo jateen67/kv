@@ -2,9 +2,7 @@ package internal
 
 import (
 	"errors"
-	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"time"
 )
@@ -25,65 +23,44 @@ within each data file:
 
 *note: the active data file will automatically close once it reaches a certain size threshold
 
+this is DISK storage, so this will all be stored in SSD/HDD, therefore being persistent
 */
 
-const SEEK = 0
-
 type DiskStore struct {
-	file          *os.File
+	serverFile    *os.File
 	writePosition int
-	keyDir        map[string]KeyEntry // recall: KeyEntry has the position of the byte offset in the file where the value exists
+	keyDir        map[string]KeyEntry
 }
 
 func fileExists(fileName string) bool {
-	if _, err := os.Stat(fileName); err == nil || errors.Is(err, fs.ErrExist) {
-		return true
+	if _, err := os.Stat(fileName); errors.Is(err, os.ErrNotExist) {
+		return false
 	}
-	return false
+	return true
 }
 
 func NewDiskStore(fileName string) (*DiskStore, error) {
 	ds := &DiskStore{keyDir: make(map[string]KeyEntry)}
 	if fileExists(fileName) {
-		ds.initKeyDir(fileName)
+		err := ds.initKeyDir(fileName)
+		if err != nil {
+			return nil, errors.New("newdiskstore() error: could not init keydir")
+		}
 	}
-	// we open the file in following modes:
-	//	os.O_APPEND - writes are append only.
-	// 	os.O_RDWR - can read and write to the file
-	// 	os.O_CREATE - creates the file if it does not exist
+
 	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}
-	ds.file = file
-	return ds, nil
-}
+	ds.serverFile = file
 
-func (ds *DiskStore) Get(key string) string {
-	kEntry, ok := ds.keyDir[key]
-	if !ok {
-		return ""
-	}
-	// move the current pointer to the right offset
-	ds.file.Seek(int64(kEntry.Position), SEEK)
-	data := make([]byte, kEntry.TotalSize)
-	_, err := io.ReadFull(ds.file, data)
-	if err != nil {
-		panic(fmt.Sprintf("get() read error: %s", err))
-	}
-
-	record := Record{}
-	err = record.DecodeKV(data)
-	if err != nil {
-		panic(fmt.Sprintf("get() decode error: %s", err))
-	}
-	return record.Value
+	return ds, err
 }
 
 func (ds *DiskStore) Set(key string, value string) error {
 	_, ok := ds.keyDir[key]
 	if ok {
-		return errors.New("set() error: key already set")
+		return errors.New("set() error: key already exists")
 	}
 	if len(key) == 0 {
 		return errors.New("set() error: key empty")
@@ -91,10 +68,7 @@ func (ds *DiskStore) Set(key string, value string) error {
 	if len(value) == 0 {
 		return errors.New("set() error: value empty")
 	}
-	// The steps to save a KV to disk is simple:
-	// 1. Encode the KV into bytes
-	// 2. Write the bytes to disk by appending to the file
-	// 3. Update KeyDir with the KeyEntry of this key
+
 	header := Header{
 		CheckSum:  0,
 		Tombstone: 0,
@@ -111,36 +85,37 @@ func (ds *DiskStore) Set(key string, value string) error {
 	record.Header.CheckSum = record.CalculateChecksum()
 
 	size, data := record.EncodeKV()
-	// file consistency is hard (comp310)
-	if _, err := ds.file.Write(data); err != nil {
-		panic(fmt.Sprintf("set() write error: %s", err))
-	}
-	// ensure our writes are actually persisted to the disk
-	if err := ds.file.Sync(); err != nil {
-		panic(fmt.Sprintf("get() write sync error: %s", err))
-	}
+	ds.writeToFile(data)
+
 	ds.keyDir[key] = NewKeyEntry(header.TimeStamp, uint32(ds.writePosition), record.TotalSize)
-	ds.writePosition += size
+	ds.writePosition += int(size)
 	return nil
 }
 
-func (ds *DiskStore) Close() bool {
-	// important to actually write to disk through Sync() first
-	ds.file.Sync()
-	if err := ds.file.Close(); err != nil {
-		return false
+func (ds *DiskStore) Get(key string) (string, error) {
+	keyEntry, ok := ds.keyDir[key]
+	if !ok {
+		return "", errors.New("get() error: key not found")
 	}
-	return true
+
+	entireEntry := make([]byte, keyEntry.TotalSize)
+	ds.serverFile.ReadAt(entireEntry, int64(keyEntry.Position))
+
+	record := Record{}
+	if decodeErr := record.DecodeKV(entireEntry); decodeErr != nil {
+		return "", errors.New("get() error: decoding failed")
+	}
+
+	return record.Value, nil
 }
 
 func (ds *DiskStore) Delete(key string) error {
 	// key note: this is an APPEND-ONLY db, so it wouldn't make sense to
 	// overwrite existing data and place a tombstone value there
 	// thus we have to write a semi-copy of the record w/ the tombstone val activated
-
 	_, ok := ds.keyDir[key]
 	if !ok {
-		return errors.New("delete() error: key does not exist")
+		return errors.New("delete() error: key not found")
 	}
 
 	tempVal := ""
@@ -161,28 +136,24 @@ func (ds *DiskStore) Delete(key string) error {
 	record.Header.CheckSum = record.CalculateChecksum()
 
 	_, data := record.EncodeKV()
-	// file consistency is hard (comp310)
-	if _, err := ds.file.Write(data); err != nil {
-		panic(fmt.Sprintf("set() write error: %s", err))
-	}
-	// ensure our writes are actually persisted to the disk
-	if err := ds.file.Sync(); err != nil {
-		panic(fmt.Sprintf("get() write sync error: %s", err))
-	}
-	// delete key
+	ds.writeToFile(data)
+
 	delete(ds.keyDir, key)
 	return nil
 }
 
+func (ds *DiskStore) Close() bool {
+	ds.serverFile.Sync()
+	if err := ds.serverFile.Close(); err != nil {
+		return false
+	}
+	return true
+}
+
 func (ds *DiskStore) initKeyDir(existingFile string) error {
-	// we will initialise the keyDir by reading the contents of the file, record by
-	// record. As we read each record, we will also update our keyDir with the
-	// corresponding KeyEntry
-	//
-	// NOTE: this method is a blocking one, if the DB size is yuge then it will take
-	// a lot of time to startup
 	file, _ := os.Open(existingFile)
 	defer file.Close()
+
 	for {
 		header := make([]byte, headerSize)
 		_, err := io.ReadFull(file, header)
@@ -190,28 +161,45 @@ func (ds *DiskStore) initKeyDir(existingFile string) error {
 			break
 		}
 		if err != nil {
-			panic(fmt.Sprintf("initKeyDir() read header error: %s", err))
+			return err
 		}
 
 		h := &Header{}
 		err = h.decodeHeader(header)
 		if err != nil {
-			panic(fmt.Sprintf("initKeyDir() decode header error: %s", err))
+			return err
 		}
 
 		key := make([]byte, h.KeySize)
 		value := make([]byte, h.ValueSize)
-		_, err = io.ReadFull(file, key)
-		if err != nil {
-			panic(fmt.Sprintf("initKeyDir() read key error: %s", err))
+
+		_, keyErr := io.ReadFull(file, key)
+		if keyErr != nil {
+			return err
 		}
-		_, err = io.ReadFull(file, value)
-		if err != nil {
-			panic(fmt.Sprintf("initKeyDir() read value error: %s", err))
+
+		_, valErr := io.ReadFull(file, value)
+		if valErr != nil {
+			return err
 		}
+
 		totalSize := headerSize + h.KeySize + h.ValueSize
 		ds.keyDir[string(key)] = NewKeyEntry(h.TimeStamp, uint32(ds.writePosition), totalSize)
+		if h.Tombstone == 1 {
+			delete(ds.keyDir, string(key))
+		}
 		ds.writePosition += int(totalSize)
+	}
+	return nil
+}
+
+func (ds *DiskStore) writeToFile(data []byte) error {
+	if _, writeErr := ds.serverFile.Write(data); writeErr != nil {
+		panic(writeErr)
+	}
+	// file consistency very complex (comp310)
+	if syncErr := ds.serverFile.Sync(); syncErr != nil {
+		panic(syncErr)
 	}
 	return nil
 }
