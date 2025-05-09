@@ -1,7 +1,9 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/binary"
+	"hash/crc32"
 )
 
 /*
@@ -11,51 +13,81 @@ The format for each key-value on disk is as follows:
 -------------------------------------------------
 timestamp, key_size, value_size form the header of the entry and each of these must be 4 bytes at most
 */
-const headerSize = 13
+const headerSize = 17
 
 // Metadata about the KV pair, which is what we insert into the keydir
 type KeyEntry struct {
-	tombstone uint8
-	timestamp uint32
-	totalSize uint32
-	position  uint32
+	TimeStamp uint32
+	Position  uint32
+	TotalSize uint32
 }
 
-func NewKeyEntry(tombstone uint8, timestamp, position, size uint32) KeyEntry {
+type Header struct {
+	CheckSum  uint32
+	Tombstone uint8
+	TimeStamp uint32
+	KeySize   uint32
+	ValueSize uint32
+}
+
+type Record struct {
+	Header    Header
+	Key       string
+	Value     string
+	TotalSize uint32
+}
+
+func NewKeyEntry(timestamp, position, totalSize uint32) KeyEntry {
 	return KeyEntry{
-		tombstone: tombstone,
-		timestamp: timestamp,
-		totalSize: size,
-		position:  position,
+		TimeStamp: timestamp,
+		Position:  position,
+		TotalSize: totalSize,
 	}
 }
 
-func encodeHeader(tombstone uint8, timestamp, keySize, valueSize uint32) []byte {
+func (h *Header) encodeHeader() []byte {
 	header := make([]byte, headerSize)
-	header[0] = tombstone
-	binary.LittleEndian.PutUint32(header[1:5], timestamp)
-	binary.LittleEndian.PutUint32(header[5:9], keySize)
-	binary.LittleEndian.PutUint32(header[9:13], valueSize)
+	binary.LittleEndian.PutUint32(header[0:4], h.CheckSum)
+	header[4] = h.Tombstone
+	binary.LittleEndian.PutUint32(header[5:9], h.TimeStamp)
+	binary.LittleEndian.PutUint32(header[9:13], h.KeySize)
+	binary.LittleEndian.PutUint32(header[13:17], h.ValueSize)
 	return header
 }
 
-func decodeHeader(header []byte) (uint8, uint32, uint32, uint32) {
-	tombstone := uint8(header[0])
-	timestamp := binary.LittleEndian.Uint32(header[1:5])
-	keySize := binary.LittleEndian.Uint32(header[5:9])
-	valueSize := binary.LittleEndian.Uint32(header[9:13])
-	return tombstone, timestamp, keySize, valueSize
+func (h *Header) decodeHeader(header []byte) error {
+	h.CheckSum = binary.LittleEndian.Uint32(header[0:4])
+	h.Tombstone = uint8(header[4])
+	h.TimeStamp = binary.LittleEndian.Uint32(header[5:9])
+	h.KeySize = binary.LittleEndian.Uint32(header[9:13])
+	h.ValueSize = binary.LittleEndian.Uint32(header[13:17])
+	return nil
 }
 
-func encodeKV(tombstone uint8, timestamp uint32, key string, value string) (int, []byte) {
-	header := encodeHeader(tombstone, timestamp, uint32(len(key)), uint32(len(value)))
-	data := append([]byte(key), []byte(value)...)
+func (r *Record) EncodeKV() (int, []byte) {
+	header := r.Header.encodeHeader()
+	data := append([]byte(r.Key), []byte(r.Value)...)
 	return headerSize + len(data), append(header, data...)
 }
 
-func decodeKV(data []byte) (uint8, uint32, string, string) {
-	tombstone, timestamp, keySize, valueSize := decodeHeader(data[0:headerSize])
-	key := string(data[headerSize : headerSize+keySize])
-	value := string(data[headerSize+keySize : headerSize+keySize+valueSize])
-	return tombstone, timestamp, key, value
+func (r *Record) DecodeKV(data []byte) error {
+	err := r.Header.decodeHeader(data[0:headerSize])
+	if err != nil {
+		return err
+	}
+	r.Key = string(data[headerSize : headerSize+r.Header.KeySize])
+	r.Value = string(data[headerSize+r.Header.KeySize : headerSize+r.Header.KeySize+r.Header.ValueSize])
+	r.TotalSize = headerSize + r.Header.KeySize + r.Header.ValueSize
+	return nil
+}
+
+func (r *Record) CalculateChecksum() uint32 {
+	headerBuf := new(bytes.Buffer)
+	binary.Write(headerBuf, binary.LittleEndian, &r.Header.Tombstone)
+	binary.Write(headerBuf, binary.LittleEndian, &r.Header.TimeStamp)
+	binary.Write(headerBuf, binary.LittleEndian, &r.Header.KeySize)
+	binary.Write(headerBuf, binary.LittleEndian, &r.Header.ValueSize)
+	data := append([]byte(r.Key), []byte(r.Value)...)
+	buf := append(headerBuf.Bytes(), data...)
+	return crc32.ChecksumIEEE(buf)
 }

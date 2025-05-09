@@ -65,17 +65,19 @@ func (ds *DiskStore) Get(key string) string {
 		return ""
 	}
 	// move the current pointer to the right offset
-	ds.file.Seek(int64(kEntry.position), SEEK)
-	data := make([]byte, kEntry.totalSize)
+	ds.file.Seek(int64(kEntry.Position), SEEK)
+	data := make([]byte, kEntry.TotalSize)
 	_, err := io.ReadFull(ds.file, data)
 	if err != nil {
 		panic(fmt.Sprintf("get() read error: %s", err))
 	}
-	tombstone, _, _, value := decodeKV(data)
-	if tombstone == 1 {
-		return ""
+
+	record := Record{}
+	err = record.DecodeKV(data)
+	if err != nil {
+		panic(fmt.Sprintf("get() decode error: %s", err))
 	}
-	return value
+	return record.Value
 }
 
 func (ds *DiskStore) Set(key string, value string) error {
@@ -93,8 +95,22 @@ func (ds *DiskStore) Set(key string, value string) error {
 	// 1. Encode the KV into bytes
 	// 2. Write the bytes to disk by appending to the file
 	// 3. Update KeyDir with the KeyEntry of this key
-	timestamp := uint32(time.Now().Unix())
-	size, data := encodeKV(0, timestamp, key, value)
+	header := Header{
+		CheckSum:  0,
+		Tombstone: 0,
+		TimeStamp: uint32(time.Now().Unix()),
+		KeySize:   uint32(len(key)),
+		ValueSize: uint32(len(value)),
+	}
+	record := Record{
+		Header:    header,
+		Key:       key,
+		Value:     value,
+		TotalSize: headerSize + header.KeySize + header.ValueSize,
+	}
+	record.Header.CheckSum = record.CalculateChecksum()
+
+	size, data := record.EncodeKV()
 	// file consistency is hard (comp310)
 	if _, err := ds.file.Write(data); err != nil {
 		panic(fmt.Sprintf("set() write error: %s", err))
@@ -103,7 +119,7 @@ func (ds *DiskStore) Set(key string, value string) error {
 	if err := ds.file.Sync(); err != nil {
 		panic(fmt.Sprintf("get() write sync error: %s", err))
 	}
-	ds.keyDir[key] = NewKeyEntry(0, timestamp, uint32(ds.writePosition), uint32(size))
+	ds.keyDir[key] = NewKeyEntry(header.TimeStamp, uint32(ds.writePosition), record.TotalSize)
 	ds.writePosition += size
 	return nil
 }
@@ -126,8 +142,25 @@ func (ds *DiskStore) Delete(key string) error {
 	if !ok {
 		return errors.New("delete() error: key does not exist")
 	}
-	timestamp := uint32(time.Now().Unix())
-	_, data := encodeKV(0, timestamp, key, "")
+
+	tempVal := ""
+	header := Header{
+		CheckSum:  0,
+		TimeStamp: uint32(time.Now().Unix()),
+		KeySize:   uint32(len(key)),
+		ValueSize: uint32(len(tempVal)),
+	}
+	header.Tombstone = 1
+
+	record := Record{
+		Header:    header,
+		Key:       key,
+		Value:     tempVal,
+		TotalSize: headerSize + header.KeySize + header.ValueSize,
+	}
+	record.Header.CheckSum = record.CalculateChecksum()
+
+	_, data := record.EncodeKV()
 	// file consistency is hard (comp310)
 	if _, err := ds.file.Write(data); err != nil {
 		panic(fmt.Sprintf("set() write error: %s", err))
@@ -159,9 +192,15 @@ func (ds *DiskStore) initKeyDir(existingFile string) error {
 		if err != nil {
 			panic(fmt.Sprintf("initKeyDir() read header error: %s", err))
 		}
-		tombstone, timestamp, keySize, valueSize := decodeHeader(header)
-		key := make([]byte, keySize)
-		value := make([]byte, valueSize)
+
+		h := &Header{}
+		err = h.decodeHeader(header)
+		if err != nil {
+			panic(fmt.Sprintf("initKeyDir() decode header error: %s", err))
+		}
+
+		key := make([]byte, h.KeySize)
+		value := make([]byte, h.ValueSize)
 		_, err = io.ReadFull(file, key)
 		if err != nil {
 			panic(fmt.Sprintf("initKeyDir() read key error: %s", err))
@@ -170,8 +209,8 @@ func (ds *DiskStore) initKeyDir(existingFile string) error {
 		if err != nil {
 			panic(fmt.Sprintf("initKeyDir() read value error: %s", err))
 		}
-		totalSize := headerSize + keySize + valueSize
-		ds.keyDir[string(key)] = NewKeyEntry(tombstone, timestamp, uint32(ds.writePosition), totalSize)
+		totalSize := headerSize + h.KeySize + h.ValueSize
+		ds.keyDir[string(key)] = NewKeyEntry(h.TimeStamp, uint32(ds.writePosition), totalSize)
 		ds.writePosition += int(totalSize)
 	}
 	return nil
