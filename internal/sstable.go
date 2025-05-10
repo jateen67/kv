@@ -2,14 +2,16 @@ package internal
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"sync/atomic"
 )
 
 const (
-	DATA_FILE_EXTENSION  string = ".data"
-	INDEX_FILE_EXTENSION string = ".index"
+	DATA_FILE_EXTENSION      string = ".data"
+	INDEX_FILE_EXTENSION     string = ".index"
+	SPARSE_INDEX_SAMPLE_SIZE int    = 100
 )
 
 var ssTableCounter uint32
@@ -18,6 +20,8 @@ type SSTable struct {
 	dataFile   *os.File
 	indexFile  *os.File
 	sstCounter uint32
+	minKey     string
+	maxKey     string
 }
 
 func InitSSTableOnDisk(directory string, entries []Record) error {
@@ -29,7 +33,7 @@ func InitSSTableOnDisk(directory string, entries []Record) error {
 	if err != nil {
 		return err
 	}
-	err = writeEntriesToSST(entries, table.dataFile)
+	err = writeEntriesToSST(entries, table)
 	return err
 }
 
@@ -39,8 +43,8 @@ func (sst *SSTable) initTableFiles(directory string) error {
 		return err
 	}
 
-	dataFile, _ := os.Create(sst.getNextSstFilename(directory) + DATA_FILE_EXTENSION)
-	indexFile, err := os.Create(sst.getNextSstFilename(directory) + INDEX_FILE_EXTENSION)
+	dataFile, _ := os.Create(getNextSstFilename(directory, sst.sstCounter) + DATA_FILE_EXTENSION)
+	indexFile, err := os.Create(getNextSstFilename(directory, sst.sstCounter) + INDEX_FILE_EXTENSION)
 	if err != nil {
 		return err
 	}
@@ -49,20 +53,58 @@ func (sst *SSTable) initTableFiles(directory string) error {
 	return nil
 }
 
-func (sst *SSTable) getNextSstFilename(directory string) string {
-	return fmt.Sprintf("../%s/sst_%d", directory, sst.sstCounter)
+func getNextSstFilename(directory string, c uint32) string {
+	return fmt.Sprintf("../%s/sst_%d", directory, c)
 }
 
-func writeEntriesToSST(entries []Record, dataFile *os.File) error {
+type sparseIndex struct {
+	keySize    uint32
+	key        string
+	byteOffset uint32
+}
+
+func writeEntriesToSST(entries []Record, table *SSTable) error {
 	buf := new(bytes.Buffer)
+	var sparseKeys []sparseIndex
+	var byteOffsetCounter uint32
+
+	// Keep track of min, max for searching in the case our desired key is outside these bounds
+	table.minKey = entries[0].Key
+	table.maxKey = entries[len(entries)-1].Key
+
+	// * every 100th key will be put into the sparse index
 	for i := range entries {
+		if i%SPARSE_INDEX_SAMPLE_SIZE == 0 {
+			sparseKeys = append(sparseKeys, sparseIndex{
+				keySize:    entries[i].Header.KeySize,
+				key:        entries[i].Key,
+				byteOffset: byteOffsetCounter,
+			})
+		}
+		byteOffsetCounter += entries[i].TotalSize
 		err := entries[i].EncodeKV(buf)
 		if err != nil {
 			return err
 		}
 	}
 	// after encoding each entry, dump into the SSTable
-	if err := writeToFile(buf.Bytes(), dataFile); err != nil {
+	if err := writeToFile(buf.Bytes(), table.dataFile); err != nil {
+		return err
+	}
+	err := populateSparseIndex(sparseKeys, table.indexFile)
+	return err
+}
+
+func populateSparseIndex(indices []sparseIndex, indexFile *os.File) error {
+	// encode and write to index file
+	buf := new(bytes.Buffer)
+	for i := range indices {
+		binary.Write(buf, binary.LittleEndian, &indices[i].keySize)
+		buf.WriteString(indices[i].key)
+		binary.Write(buf, binary.LittleEndian, &indices[i].byteOffset)
+	}
+
+	if err := writeToFile(buf.Bytes(), indexFile); err != nil {
 		return err
 	}
 	return nil
