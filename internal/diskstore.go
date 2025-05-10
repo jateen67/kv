@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -84,11 +85,17 @@ func (ds *DiskStore) Set(key string, value string) error {
 	}
 	record.Header.CheckSum = record.CalculateChecksum()
 
-	size, data := record.EncodeKV()
-	ds.writeToFile(data)
+	buf := new(bytes.Buffer)
+	if err := record.EncodeKV(buf); err != nil {
+		return errors.New("set() error: could not encode record")
+	}
+	err := ds.writeToFile(buf.Bytes())
+	if err != nil {
+		return errors.New("set() error: could not write to file")
+	}
 
 	ds.keyDir[key] = NewKeyEntry(header.TimeStamp, uint32(ds.writePosition), record.TotalSize)
-	ds.writePosition += int(size)
+	ds.writePosition += int(record.TotalSize)
 	return nil
 }
 
@@ -102,7 +109,7 @@ func (ds *DiskStore) Get(key string) (string, error) {
 	ds.serverFile.ReadAt(entireEntry, int64(keyEntry.Position))
 
 	record := Record{}
-	if decodeErr := record.DecodeKV(entireEntry); decodeErr != nil {
+	if err := record.DecodeKV(entireEntry); err != nil {
 		return "", errors.New("get() error: decoding failed")
 	}
 
@@ -135,8 +142,11 @@ func (ds *DiskStore) Delete(key string) error {
 	}
 	record.Header.CheckSum = record.CalculateChecksum()
 
-	_, data := record.EncodeKV()
-	ds.writeToFile(data)
+	buf := new(bytes.Buffer)
+	if err := record.EncodeKV(buf); err != nil {
+		return errors.New("delete() error: could not encode record")
+	}
+	ds.writeToFile(buf.Bytes())
 
 	delete(ds.keyDir, key)
 	return nil
@@ -173,13 +183,13 @@ func (ds *DiskStore) initKeyDir(existingFile string) error {
 		key := make([]byte, h.KeySize)
 		value := make([]byte, h.ValueSize)
 
-		_, keyErr := io.ReadFull(file, key)
-		if keyErr != nil {
+		_, err = io.ReadFull(file, key)
+		if err != nil {
 			return err
 		}
 
-		_, valErr := io.ReadFull(file, value)
-		if valErr != nil {
+		_, err = io.ReadFull(file, value)
+		if err != nil {
 			return err
 		}
 
@@ -194,12 +204,12 @@ func (ds *DiskStore) initKeyDir(existingFile string) error {
 }
 
 func (ds *DiskStore) writeToFile(data []byte) error {
-	if _, writeErr := ds.serverFile.Write(data); writeErr != nil {
-		panic(writeErr)
+	if _, err := ds.serverFile.Write(data); err != nil {
+		return err
 	}
 	// file consistency very complex (comp310)
-	if syncErr := ds.serverFile.Sync(); syncErr != nil {
-		panic(syncErr)
+	if err := ds.serverFile.Sync(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 )
 
@@ -43,38 +44,52 @@ func NewKeyEntry(timestamp, position, totalSize uint32) KeyEntry {
 	}
 }
 
-func (h *Header) encodeHeader() []byte {
-	header := make([]byte, headerSize)
-	binary.LittleEndian.PutUint32(header[0:4], h.CheckSum)
-	header[4] = h.Tombstone
-	binary.LittleEndian.PutUint32(header[5:9], h.TimeStamp)
-	binary.LittleEndian.PutUint32(header[9:13], h.KeySize)
-	binary.LittleEndian.PutUint32(header[13:17], h.ValueSize)
-	return header
-}
+func (h *Header) encodeHeader(buf *bytes.Buffer) error {
+	err := binary.Write(buf, binary.LittleEndian, &h.CheckSum)
+	binary.Write(buf, binary.LittleEndian, &h.Tombstone)
+	binary.Write(buf, binary.LittleEndian, &h.TimeStamp)
+	binary.Write(buf, binary.LittleEndian, &h.KeySize)
+	binary.Write(buf, binary.LittleEndian, &h.ValueSize)
 
-func (h *Header) decodeHeader(header []byte) error {
-	h.CheckSum = binary.LittleEndian.Uint32(header[0:4])
-	h.Tombstone = uint8(header[4])
-	h.TimeStamp = binary.LittleEndian.Uint32(header[5:9])
-	h.KeySize = binary.LittleEndian.Uint32(header[9:13])
-	h.ValueSize = binary.LittleEndian.Uint32(header[13:17])
+	if err != nil {
+		return errors.New("encodeHeader() error: could not encode header")
+	}
+
 	return nil
 }
 
-func (r *Record) EncodeKV() (int, []byte) {
-	header := r.Header.encodeHeader()
-	data := append([]byte(r.Key), []byte(r.Value)...)
-	return headerSize + len(data), append(header, data...)
+func (h *Header) decodeHeader(buf []byte) error {
+	// must pass in reference b/c go is call by value and won't modify original otherwise
+	_, err := binary.Decode(buf[:4], binary.LittleEndian, &h.CheckSum)
+	binary.Decode(buf[4:5], binary.LittleEndian, &h.Tombstone)
+	binary.Decode(buf[5:9], binary.LittleEndian, &h.TimeStamp)
+	binary.Decode(buf[9:13], binary.LittleEndian, &h.KeySize)
+	binary.Decode(buf[13:17], binary.LittleEndian, &h.ValueSize)
+
+	if err != nil {
+		return errors.New("decodeHeader() error: could not decode header")
+	}
+
+	return nil
 }
 
-func (r *Record) DecodeKV(data []byte) error {
-	err := r.Header.decodeHeader(data[0:headerSize])
+func (r *Record) EncodeKV(buf *bytes.Buffer) error {
+	r.Header.encodeHeader(buf)
+	_, err := buf.WriteString(r.Key)
 	if err != nil {
 		return err
 	}
-	r.Key = string(data[headerSize : headerSize+r.Header.KeySize])
-	r.Value = string(data[headerSize+r.Header.KeySize : headerSize+r.Header.KeySize+r.Header.ValueSize])
+	_, err = buf.WriteString(r.Value)
+	return err
+}
+
+func (r *Record) DecodeKV(buf []byte) error {
+	err := r.Header.decodeHeader(buf[:headerSize])
+	if err != nil {
+		return err
+	}
+	r.Key = string(buf[headerSize : headerSize+r.Header.KeySize])
+	r.Value = string(buf[headerSize+r.Header.KeySize : headerSize+r.Header.KeySize+r.Header.ValueSize])
 	r.TotalSize = headerSize + r.Header.KeySize + r.Header.ValueSize
 	return nil
 }
