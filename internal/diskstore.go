@@ -3,7 +3,6 @@ package internal
 import (
 	"bytes"
 	"errors"
-	"io"
 	"os"
 	"time"
 )
@@ -60,6 +59,10 @@ func NewDiskStore(fileName string) (*DiskStore, error) {
 }
 
 func (ds *DiskStore) Set(key string, value string) error {
+	// Pprevent writes occurring while memtable is locked and flushing to disk
+	if ds.memtable.locked {
+		return errors.New("set() error: memtable is currently locked and flushing")
+	}
 	if len(key) == 0 {
 		return errors.New("set() error: key empty")
 	}
@@ -105,41 +108,41 @@ func (ds *DiskStore) Get(key string) (string, error) {
 }
 
 // TODO: rework to add rbtree and sstable
-func (ds *DiskStore) Delete(key string) error {
-	// key note: this is an APPEND-ONLY db, so it wouldn't make sense to
-	// overwrite existing data and place a tombstone value there
-	// thus we have to write a semi-copy of the record w/ the tombstone val activated
-	_, ok := ds.keyDir[key]
-	if !ok {
-		return errors.New("delete() error: key not found")
-	}
+// func (ds *DiskStore) Delete(key string) error {
+// 	// key note: this is an APPEND-ONLY db, so it wouldn't make sense to
+// 	// overwrite existing data and place a tombstone value there
+// 	// thus we have to write a semi-copy of the record w/ the tombstone val activated
+// 	_, ok := ds.keyDir[key]
+// 	if !ok {
+// 		return errors.New("delete() error: key not found")
+// 	}
 
-	tempVal := ""
-	header := Header{
-		CheckSum:  0,
-		Tombstone: 1,
-		TimeStamp: uint32(time.Now().Unix()),
-		KeySize:   uint32(len(key)),
-		ValueSize: uint32(len(tempVal)),
-	}
+// 	tempVal := ""
+// 	header := Header{
+// 		CheckSum:  0,
+// 		Tombstone: 1,
+// 		TimeStamp: uint32(time.Now().Unix()),
+// 		KeySize:   uint32(len(key)),
+// 		ValueSize: uint32(len(tempVal)),
+// 	}
 
-	record := Record{
-		Header:    header,
-		Key:       key,
-		Value:     tempVal,
-		TotalSize: headerSize + header.KeySize + header.ValueSize,
-	}
-	record.Header.CheckSum = record.CalculateChecksum()
+// 	record := Record{
+// 		Header:    header,
+// 		Key:       key,
+// 		Value:     tempVal,
+// 		TotalSize: headerSize + header.KeySize + header.ValueSize,
+// 	}
+// 	record.Header.CheckSum = record.CalculateChecksum()
 
-	buf := new(bytes.Buffer)
-	if err := record.EncodeKV(buf); err != nil {
-		return errors.New("delete() error: could not encode record")
-	}
-	ds.writeToFile(buf.Bytes())
+// 	buf := new(bytes.Buffer)
+// 	if err := record.EncodeKV(buf); err != nil {
+// 		return errors.New("delete() error: could not encode record")
+// 	}
+// 	ds.writeToFile(buf.Bytes())
 
-	delete(ds.keyDir, key)
-	return nil
-}
+// 	delete(ds.keyDir, key)
+// 	return nil
+// }
 
 func (ds *DiskStore) Close() bool {
 	ds.serverFile.Sync()
@@ -150,48 +153,48 @@ func (ds *DiskStore) Close() bool {
 }
 
 // TODO: rework to add wal instead of keydir
-func (ds *DiskStore) initKeyDir(existingFile string) error {
-	file, _ := os.Open(existingFile)
-	defer file.Close()
+// func (ds *DiskStore) initKeyDir(existingFile string) error {
+// 	file, _ := os.Open(existingFile)
+// 	defer file.Close()
 
-	for {
-		header := make([]byte, headerSize)
-		_, err := io.ReadFull(file, header)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
+// 	for {
+// 		header := make([]byte, headerSize)
+// 		_, err := io.ReadFull(file, header)
+// 		if err == io.EOF {
+// 			break
+// 		}
+// 		if err != nil {
+// 			return err
+// 		}
 
-		h := &Header{}
-		err = h.decodeHeader(header)
-		if err != nil {
-			return err
-		}
+// 		h := &Header{}
+// 		err = h.decodeHeader(header)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		key := make([]byte, h.KeySize)
-		value := make([]byte, h.ValueSize)
+// 		key := make([]byte, h.KeySize)
+// 		value := make([]byte, h.ValueSize)
 
-		_, err = io.ReadFull(file, key)
-		if err != nil {
-			return err
-		}
+// 		_, err = io.ReadFull(file, key)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		_, err = io.ReadFull(file, value)
-		if err != nil {
-			return err
-		}
+// 		_, err = io.ReadFull(file, value)
+// 		if err != nil {
+// 			return err
+// 		}
 
-		totalSize := headerSize + h.KeySize + h.ValueSize
-		ds.keyDir[string(key)] = NewKeyEntry(h.TimeStamp, uint32(ds.writePosition), totalSize)
-		if h.Tombstone == 1 {
-			delete(ds.keyDir, string(key))
-		}
-		ds.writePosition += int(totalSize)
-	}
-	return nil
-}
+// 		totalSize := headerSize + h.KeySize + h.ValueSize
+// 		ds.keyDir[string(key)] = NewKeyEntry(h.TimeStamp, uint32(ds.writePosition), totalSize)
+// 		if h.Tombstone == 1 {
+// 			delete(ds.keyDir, string(key))
+// 		}
+// 		ds.writePosition += int(totalSize)
+// 	}
+// 	return nil
+// }
 
 func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 	if _, err := file.Write(data); err != nil {
@@ -202,4 +205,11 @@ func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 		return err
 	}
 	return nil
+}
+
+func (ds *DiskStore) FlushMemtable() {
+	// ideally should flush memtable based on file size (i.e., 1 KB)
+	if ds.memtable.totalSize >= 1000 {
+		ds.memtable.Flush("storage")
+	}
 }

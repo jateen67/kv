@@ -2,7 +2,9 @@ package internal
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"sync/atomic"
 )
 
 const (
@@ -10,29 +12,48 @@ const (
 	INDEX_FILE_EXTENSION string = ".index"
 )
 
+var ssTableCounter uint32
+
 type SSTable struct {
-	dataFile  *os.File
-	indexFile *os.File
+	dataFile   *os.File
+	indexFile  *os.File
+	sstCounter uint32
 }
 
-func NewSSTable(filename string) *SSTable {
-	dataFile, indexFile := initializeFromDisk(filename)
-	return &SSTable{
-		dataFile:  dataFile,
-		indexFile: indexFile,
+func InitSSTableOnDisk(directory string, entries []Record) error {
+	atomic.AddUint32(&ssTableCounter, 1)
+	table := &SSTable{
+		sstCounter: ssTableCounter,
 	}
-}
-
-func initializeFromDisk(filename string) (*os.File, *os.File) {
-	dataFile, err := os.Create(filename + DATA_FILE_EXTENSION)
-	indexFile, err := os.Create(filename + INDEX_FILE_EXTENSION)
+	err := table.initTableFiles(directory)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	return dataFile, indexFile
+	err = writeEntriesToSST(entries, table.dataFile)
+	return err
 }
 
-func (sst *SSTable) writeEntriesToSST(entries []Record) error {
+func (sst *SSTable) initTableFiles(directory string) error {
+	// Create "storage" folder with read-write-execute for owner & group, read-only for others
+	if err := os.MkdirAll("../storage", 0755); err != nil {
+		return err
+	}
+
+	dataFile, _ := os.Create(sst.getNextSstFilename(directory) + DATA_FILE_EXTENSION)
+	indexFile, err := os.Create(sst.getNextSstFilename(directory) + INDEX_FILE_EXTENSION)
+	if err != nil {
+		return err
+	}
+
+	sst.dataFile, sst.indexFile = dataFile, indexFile
+	return nil
+}
+
+func (sst *SSTable) getNextSstFilename(directory string) string {
+	return fmt.Sprintf("../%s/sst_%d", directory, sst.sstCounter)
+}
+
+func writeEntriesToSST(entries []Record, dataFile *os.File) error {
 	buf := new(bytes.Buffer)
 	for i := range entries {
 		err := entries[i].EncodeKV(buf)
@@ -41,7 +62,7 @@ func (sst *SSTable) writeEntriesToSST(entries []Record) error {
 		}
 	}
 	// after encoding each entry, dump into the SSTable
-	if err := writeToFile(buf.Bytes(), sst.dataFile); err != nil {
+	if err := writeToFile(buf.Bytes(), dataFile); err != nil {
 		return err
 	}
 	return nil
