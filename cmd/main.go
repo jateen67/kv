@@ -17,10 +17,10 @@ func main() {
 		fmt.Println(err)
 	}
 	fmt.Println(author)
-	store.Delete("othello")
-	author, err = store.Get("othello")
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Println(author)
+	// store.Delete("othello")
+	// author, err = store.Get("othello")
+	// if err != nil {
+	// 	fmt.Println(err)
+	// }
+	// fmt.Println(author)
 }
