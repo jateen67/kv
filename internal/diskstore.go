@@ -30,8 +30,17 @@ this is DISK storage, so this will all be stored in SSD/HDD, therefore being per
 type DiskStore struct {
 	serverFile    *os.File
 	writePosition int
-	keyDir        map[string]KeyEntry
+	memtable      *Memtable
+	wal           *os.File
 }
+
+type Operation int
+
+const (
+	PUT Operation = iota
+	GET
+	DELETE
+)
 
 func fileExists(fileName string) bool {
 	if _, err := os.Stat(fileName); errors.Is(err, os.ErrNotExist) {
@@ -41,28 +50,16 @@ func fileExists(fileName string) bool {
 }
 
 func NewDiskStore(fileName string) (*DiskStore, error) {
-	ds := &DiskStore{keyDir: make(map[string]KeyEntry)}
-	if fileExists(fileName) {
-		err := ds.initKeyDir(fileName)
-		if err != nil {
-			return nil, errors.New("newdiskstore() error: could not init keydir")
-		}
-	}
-
-	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	ds := &DiskStore{memtable: NewMemtable()}
+	logFile, err := os.OpenFile("wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}
-	ds.serverFile = file
-
+	ds.wal = logFile
 	return ds, err
 }
 
 func (ds *DiskStore) Set(key string, value string) error {
-	_, ok := ds.keyDir[key]
-	if ok {
-		return errors.New("set() error: key already exists")
-	}
 	if len(key) == 0 {
 		return errors.New("set() error: key empty")
 	}
@@ -85,37 +82,29 @@ func (ds *DiskStore) Set(key string, value string) error {
 	}
 	record.Header.CheckSum = record.CalculateChecksum()
 
+	ds.memtable.Set(key, record)
+
 	buf := new(bytes.Buffer)
+	buf.WriteByte(byte(PUT))
 	if err := record.EncodeKV(buf); err != nil {
 		return errors.New("set() error: could not encode record")
 	}
-	err := ds.writeToFile(buf.Bytes())
-	if err != nil {
-		return errors.New("set() error: could not write to file")
-	}
 
-	ds.keyDir[key] = NewKeyEntry(header.TimeStamp, uint32(ds.writePosition), record.TotalSize)
-	ds.writePosition += int(record.TotalSize)
-	return nil
+	err := ds.writeToFile(buf.Bytes(), ds.wal)
+	return err
 }
 
 func (ds *DiskStore) Get(key string) (string, error) {
-	keyEntry, ok := ds.keyDir[key]
-	if !ok {
+	record, err := ds.memtable.Get(key)
+	if err != nil {
+		// if key not found search through sstable instead of erroring
 		return "", errors.New("get() error: key not found")
-	}
-
-	entireEntry := make([]byte, keyEntry.TotalSize)
-	ds.serverFile.ReadAt(entireEntry, int64(keyEntry.Position))
-
-	record := Record{}
-	if err := record.DecodeKV(entireEntry); err != nil {
-		return "", errors.New("get() error: decoding failed")
 	}
 
 	return record.Value, nil
 }
 
+// TODO: rework to add rbtree and sstable
 func (ds *DiskStore) Delete(key string) error {
 	// key note: this is an APPEND-ONLY db, so it wouldn't make sense to
 	// overwrite existing data and place a tombstone value there
@@ -128,11 +117,11 @@ func (ds *DiskStore) Delete(key string) error {
 	tempVal := ""
 	header := Header{
 		CheckSum:  0,
+		Tombstone: 1,
 		TimeStamp: uint32(time.Now().Unix()),
 		KeySize:   uint32(len(key)),
 		ValueSize: uint32(len(tempVal)),
 	}
-	header.Tombstone = 1
 
 	record := Record{
 		Header:    header,
@@ -160,6 +149,7 @@ func (ds *DiskStore) Close() bool {
 	return true
 }
 
+// TODO: rework to add wal instead of keydir
 func (ds *DiskStore) initKeyDir(existingFile string) error {
 	file, _ := os.Open(existingFile)
 	defer file.Close()
@@ -203,12 +193,12 @@ func (ds *DiskStore) initKeyDir(existingFile string) error {
 	return nil
 }
 
-func (ds *DiskStore) writeToFile(data []byte) error {
-	if _, err := ds.serverFile.Write(data); err != nil {
+func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
+	if _, err := file.Write(data); err != nil {
 		return err
 	}
 	// file consistency very complex (comp310)
-	if err := ds.serverFile.Sync(); err != nil {
+	if err := file.Sync(); err != nil {
 		return err
 	}
 	return nil

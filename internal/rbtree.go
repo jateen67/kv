@@ -13,7 +13,7 @@ const (
 
 type Node struct {
 	Key    string
-	Value  KeyEntry
+	Value  Record
 	Parent *Node
 	Left   *Node
 	Right  *Node
@@ -24,7 +24,7 @@ type RedBlackTree struct {
 	root *Node
 }
 
-func (tree *RedBlackTree) Insert(key string, value KeyEntry) {
+func (tree *RedBlackTree) Insert(key string, value Record) {
 	z := &Node{Key: key, Value: value, Color: RED}
 
 	var y *Node
@@ -132,7 +132,7 @@ func (tree *RedBlackTree) rotateLeft(x *Node) {
 	x.Parent = y
 }
 
-func (tree *RedBlackTree) Find(key string) (KeyEntry, error) {
+func (tree *RedBlackTree) Find(key string) (Record, error) {
 	curr := tree.root
 	for curr != nil {
 		if curr.Key == key {
@@ -143,5 +143,19 @@ func (tree *RedBlackTree) Find(key string) (KeyEntry, error) {
 			curr = curr.Right
 		}
 	}
-	return KeyEntry{}, errors.New("find() error: key not found")
+	return Record{}, errors.New("find() error: key not found")
+}
+
+func (tree *RedBlackTree) ReturnAllRecordsInSortedOrder() []Record {
+	return inorder(tree.root, []Record{})
+}
+
+func inorder(node *Node, data []Record) []Record {
+	curr := node
+	if curr != nil {
+		data = inorder(curr.Left, data)
+		data = append(data, curr.Value)
+		data = inorder(curr.Right, data)
+	}
+	return data
 }
