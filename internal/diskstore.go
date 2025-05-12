@@ -10,9 +10,10 @@ import (
 )
 
 type DiskStore struct {
-	memtable *Memtable
-	wal      *os.File
-	levels   [][]SSTable
+	memtable           *Memtable
+	wal                *os.File
+	levels             [][]SSTable
+	immutableMemtables []Memtable
 }
 
 type Operation int
@@ -22,6 +23,8 @@ const (
 	GET
 	DELETE
 )
+
+const FlushSizeThreshold = 15000
 
 func NewDiskStore() (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable()}
@@ -33,11 +36,27 @@ func NewDiskStore() (*DiskStore, error) {
 	return ds, err
 }
 
-func (ds *DiskStore) Set(key string, value string) error {
-	// Pprevent writes occurring while memtable is locked and flushing to disk
-	if ds.memtable.locked {
-		return utils.ErrMemtableLocked
+func (ds *DiskStore) Get(key string) (string, error) {
+	record, err := ds.memtable.Get(key)
+	// if not found in memtable search in sstable
+	if err == nil {
+		return record.Value, nil
+	} else if !errors.Is(err, utils.ErrKeyNotFound) {
+		return "<!>", err
 	}
+
+	for i := len(ds.levels[0]) - 1; i >= 0; i-- {
+		value, err := ds.levels[0][i].Get(key)
+		if errors.Is(err, utils.ErrKeyNotWithinTable) {
+			continue
+		}
+		return value, err
+	}
+
+	return "<!not_found>", utils.ErrKeyNotFound
+}
+
+func (ds *DiskStore) Set(key string, value string) error {
 	if len(key) == 0 {
 		return errors.New("set() error: key empty")
 	}
@@ -69,27 +88,17 @@ func (ds *DiskStore) Set(key string, value string) error {
 	}
 
 	err := ds.writeToFile(buf.Bytes(), ds.wal)
-	return err
-}
-
-func (ds *DiskStore) Get(key string) (string, error) {
-	record, err := ds.memtable.Get(key)
-	// if not found in memtable search in sstable
-	if err == nil {
-		return record.Value, nil
-	} else if !errors.Is(err, utils.ErrKeyNotFound) {
-		return "<!>", err
+	if err != nil {
+		return err
 	}
 
-	for i := len(ds.levels[0]) - 1; i >= 0; i-- {
-		value, err := ds.levels[0][i].Get(key)
-		if errors.Is(err, utils.ErrKeyNotWithinTable) {
-			continue
-		}
-		return value, err
+	// Automatically flush when memtable reaches certain threshold
+	if ds.memtable.totalSize >= FlushSizeThreshold {
+		ds.immutableMemtables = append(ds.immutableMemtables, deepCopyMemtable(*ds.memtable))
+		ds.memtable.clear()
+		ds.FlushMemtable()
 	}
-
-	return "<!not_found>", utils.ErrKeyNotFound
+	return nil
 }
 
 func (ds *DiskStore) Delete(key string) error {
@@ -110,9 +119,9 @@ func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 var counter int = 0
 
 func (ds *DiskStore) FlushMemtable() {
-	if ds.memtable.totalSize >= 6500 {
+	for i := range ds.immutableMemtables {
 		counter++
-		sstable, err := ds.memtable.Flush("storage")
+		sstable, err := ds.immutableMemtables[i].Flush("storage")
 		if err != nil {
 			panic(err)
 		}
@@ -122,5 +131,19 @@ func (ds *DiskStore) FlushMemtable() {
 		} else {
 			ds.levels[0] = append(ds.levels[0], *sstable)
 		}
+		ds.immutableMemtables = ds.immutableMemtables[:i]
 	}
+}
+
+func deepCopyMemtable(memtable Memtable) Memtable {
+	deepCopy := NewMemtable()
+	deepCopy.totalSize = memtable.totalSize
+
+	keys := memtable.data.Keys()
+	values := memtable.data.Values()
+	for i := range keys {
+		deepCopy.data.Put(keys[i], values[i])
+	}
+
+	return *deepCopy
 }

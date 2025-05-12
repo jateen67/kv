@@ -13,14 +13,12 @@ Red-Black tree as memtable -- will replace original hash table
 
 type Memtable struct {
 	data      *rbt.Tree
-	locked    bool
 	totalSize uint32
 }
 
 func NewMemtable() *Memtable {
 	return &Memtable{
 		rbt.NewWithStringComparator(),
-		false,
 		0,
 	}
 }
@@ -42,13 +40,11 @@ func (m *Memtable) Set(key string, value Record) {
 }
 
 func (m *Memtable) Flush(dir string) (*SSTable, error) {
-	m.locked = true
 	sortedEntries := m.returnAllRecordsInSortedOrder()
 	table, err := InitSSTableOnDisk(dir, castToRecordSlice(sortedEntries))
 	if err != nil {
 		return nil, err
 	}
-	m.clear()
 	return table, nil
 }
 
@@ -81,5 +77,4 @@ func inorderRBT(node *rbt.Node, data []interface{}) []interface{} {
 func (m *Memtable) clear() {
 	m.data.Clear()
 	m.totalSize = 0
-	m.locked = false
 }
