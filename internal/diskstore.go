@@ -24,11 +24,11 @@ const (
 	DELETE
 )
 
-const FlushSizeThreshold = 15000
+const FlushSizeThreshold = 100_000
 
 func NewDiskStore() (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable()}
-	logFile, err := os.OpenFile("wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	logFile, err := os.OpenFile("../log/wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +102,32 @@ func (ds *DiskStore) Set(key string, value string) error {
 }
 
 func (ds *DiskStore) Delete(key string) error {
-	return nil
+	// appending a new entry but with a tombstone value and empty key
+	value := ""
+	header := Header{
+		Tombstone: 1,
+		TimeStamp: uint32(time.Now().Unix()),
+		KeySize:   uint32(len(key)),
+		ValueSize: uint32(len(value)),
+	}
+	deletionRecord := Record{
+		Header:    header,
+		Key:       key,
+		Value:     value,
+		TotalSize: headerSize + header.KeySize + header.ValueSize,
+	}
+	deletionRecord.CalculateChecksum()
+
+	ds.memtable.Set(key, deletionRecord)
+
+	buf := new(bytes.Buffer)
+	buf.WriteByte(byte(DELETE))
+	if encodeErr := deletionRecord.EncodeKV(buf); encodeErr != nil {
+		return utils.ErrEncodingKVFailed
+	}
+
+	err := ds.writeToFile(buf.Bytes(), ds.wal)
+	return err
 }
 
 func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
