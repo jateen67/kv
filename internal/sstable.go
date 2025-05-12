@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync/atomic"
 
 	"github.com/jateen67/kv/utils"
@@ -130,19 +131,17 @@ func (sst *SSTable) Get(key string) (string, error) {
 	}
 
 	// Get sparse index and move to offset
-	currOffset := sst.getCandidateByteOffset(key)
+	currOffset := sst.sparseKeys[sst.getCandidateByteOffsetIndex(key)].byteOffset
 	if _, err := sst.dataFile.Seek(int64(currOffset), 0); err != nil {
 		return "", err
 	}
 
 	var keyFound = false
-	var eofErr error
-	for keyFound == false || eofErr == nil {
+	for !keyFound {
 		// set up entry for the header
 		currEntry := make([]byte, 17)
 		_, err := io.ReadFull(sst.dataFile, currEntry)
 		if errors.Is(err, io.EOF) {
-			eofErr = err
 			fmt.Println("LOG: END OF FILE")
 			return "EOF", err
 		}
@@ -174,29 +173,29 @@ func (sst *SSTable) Get(key string) (string, error) {
 			// this works b/c since our data is sorted, if the curr key is > target key,
 			// ..then the key is not in this table
 			return "<!>", utils.ErrKeyNotFound
+		} else {
+			// else, keep iterating & looking
+			currOffset += r.Header.KeySize + r.Header.ValueSize
+			sst.dataFile.Seek(int64(currOffset), 0)
 		}
-
-		// else, keep iterating & looking
-		currOffset += r.Header.KeySize + r.Header.ValueSize
-		sst.dataFile.Seek(int64(currOffset), 0)
 	}
 
-	return "<!>", utils.ErrKeyNotFound
+	return "<!>", utils.ErrKeyNotWithinTable
 }
 
-func (sst *SSTable) getCandidateByteOffset(target string) uint32 {
+func (sst *SSTable) getCandidateByteOffsetIndex(targetKey string) int {
 	low := 0
 	high := len(sst.sparseKeys) - 1
-
-	for low < high {
+	for low <= high {
 		mid := (low + high) / 2
-		if target < sst.sparseKeys[mid].key {
-			high = mid - 1
-		} else if target > sst.sparseKeys[mid].key {
+		cmp := strings.Compare(targetKey, sst.sparseKeys[mid].key)
+		if cmp > 0 { // targetKey > sparseKeys[mid]
 			low = mid + 1
+		} else if cmp < 0 { // targetKey < sparseKeys[mid]
+			high = mid - 1
 		} else {
-			return sst.sparseKeys[mid].byteOffset
+			return mid
 		}
 	}
-	return sst.sparseKeys[low].byteOffset
+	return low - 1
 }
