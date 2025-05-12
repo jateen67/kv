@@ -1,8 +1,6 @@
 package internal
 
-import (
-	"errors"
-)
+import "github.com/jateen67/kv/utils"
 
 type color int
 
@@ -143,7 +141,7 @@ func (tree *RedBlackTree) Find(key string) (Record, error) {
 			curr = curr.Right
 		}
 	}
-	return Record{}, errors.New("find() error: key not found")
+	return Record{}, utils.ErrKeyNotFound
 }
 
 func (tree *RedBlackTree) ReturnAllRecordsInSortedOrder() []Record {

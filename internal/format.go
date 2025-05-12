@@ -3,8 +3,9 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"hash/crc32"
+
+	"github.com/jateen67/kv/utils"
 )
 
 /*
@@ -52,7 +53,7 @@ func (h *Header) encodeHeader(buf *bytes.Buffer) error {
 	binary.Write(buf, binary.LittleEndian, &h.ValueSize)
 
 	if err != nil {
-		return errors.New("encodeHeader() error: could not encode header")
+		return utils.ErrEncodingHeaderFailed
 	}
 
 	return nil
@@ -67,7 +68,7 @@ func (h *Header) decodeHeader(buf []byte) error {
 	binary.Decode(buf[13:17], binary.LittleEndian, &h.ValueSize)
 
 	if err != nil {
-		return errors.New("decodeHeader() error: could not decode header")
+		return utils.ErrDecodingHeaderFailed
 	}
 
 	return nil

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"time"
+
+	"github.com/jateen67/kv/utils"
 )
 
 /*
@@ -31,6 +33,7 @@ type DiskStore struct {
 	writePosition int
 	memtable      *Memtable
 	wal           *os.File
+	levels        [][]SSTable
 }
 
 type Operation int
@@ -48,7 +51,7 @@ func fileExists(fileName string) bool {
 	return true
 }
 
-func NewDiskStore(fileName string) (*DiskStore, error) {
+func NewDiskStore() (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable()}
 	logFile, err := os.OpenFile("wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
@@ -61,7 +64,7 @@ func NewDiskStore(fileName string) (*DiskStore, error) {
 func (ds *DiskStore) Set(key string, value string) error {
 	// Pprevent writes occurring while memtable is locked and flushing to disk
 	if ds.memtable.locked {
-		return errors.New("set() error: memtable is currently locked and flushing")
+		return utils.ErrMemtableLocked
 	}
 	if len(key) == 0 {
 		return errors.New("set() error: key empty")
@@ -90,7 +93,7 @@ func (ds *DiskStore) Set(key string, value string) error {
 	buf := new(bytes.Buffer)
 	buf.WriteByte(byte(PUT))
 	if err := record.EncodeKV(buf); err != nil {
-		return errors.New("set() error: could not encode record")
+		return utils.ErrEncodingKVFailed
 	}
 
 	err := ds.writeToFile(buf.Bytes(), ds.wal)
@@ -99,12 +102,22 @@ func (ds *DiskStore) Set(key string, value string) error {
 
 func (ds *DiskStore) Get(key string) (string, error) {
 	record, err := ds.memtable.Get(key)
-	if err != nil {
-		// if key not found search through sstable instead of erroring
-		return "", errors.New("get() error: key not found")
+	// if not found in memtable search in sstable
+	if err == nil {
+		return record.Value, nil
+	} else if !errors.Is(err, utils.ErrKeyNotFound) {
+		return "<!>", err
 	}
 
-	return record.Value, nil
+	for i := range ds.levels[0] {
+		value, err := ds.levels[0][i].Get(key)
+		if errors.Is(err, utils.ErrKeyNotWithinTable) {
+			continue
+		}
+		return value, err
+	}
+
+	return "<!not_found>", utils.ErrKeyNotFound
 }
 
 // TODO: rework to add rbtree and sstable
@@ -152,50 +165,6 @@ func (ds *DiskStore) Close() bool {
 	return true
 }
 
-// TODO: rework to add wal instead of keydir
-// func (ds *DiskStore) initKeyDir(existingFile string) error {
-// 	file, _ := os.Open(existingFile)
-// 	defer file.Close()
-
-// 	for {
-// 		header := make([]byte, headerSize)
-// 		_, err := io.ReadFull(file, header)
-// 		if err == io.EOF {
-// 			break
-// 		}
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		h := &Header{}
-// 		err = h.decodeHeader(header)
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		key := make([]byte, h.KeySize)
-// 		value := make([]byte, h.ValueSize)
-
-// 		_, err = io.ReadFull(file, key)
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		_, err = io.ReadFull(file, value)
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		totalSize := headerSize + h.KeySize + h.ValueSize
-// 		ds.keyDir[string(key)] = NewKeyEntry(h.TimeStamp, uint32(ds.writePosition), totalSize)
-// 		if h.Tombstone == 1 {
-// 			delete(ds.keyDir, string(key))
-// 		}
-// 		ds.writePosition += int(totalSize)
-// 	}
-// 	return nil
-// }
-
 func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 	if _, err := file.Write(data); err != nil {
 		return err
@@ -207,9 +176,20 @@ func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 	return nil
 }
 
+var counter int = 0
+
 func (ds *DiskStore) FlushMemtable() {
-	// ideally should flush memtable based on file size (i.e., 1 KB)
-	if ds.memtable.totalSize >= 1000 {
-		ds.memtable.Flush("storage")
+	if ds.memtable.totalSize >= 800 {
+		counter++
+		sstable, err := ds.memtable.Flush("storage")
+		if err != nil {
+			panic(err)
+		}
+
+		if len(ds.levels) == 0 {
+			ds.levels = append(ds.levels, []SSTable{*sstable})
+		} else {
+			ds.levels[0] = append(ds.levels[0], *sstable)
+		}
 	}
 }

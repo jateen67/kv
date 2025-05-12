@@ -23,15 +23,15 @@ func (m *Memtable) Set(key string, value Record) {
 	m.totalSize += value.TotalSize
 }
 
-func (m *Memtable) Flush(dir string) error {
+func (m *Memtable) Flush(dir string) (*SSTable, error) {
 	m.locked = true
 	sortedEntries := m.data.ReturnAllRecordsInSortedOrder()
-	err := InitSSTableOnDisk(dir, sortedEntries)
+	table, err := InitSSTableOnDisk(dir, sortedEntries)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	m.clear()
-	return nil
+	return table, nil
 }
 
 func (m *Memtable) clear() {

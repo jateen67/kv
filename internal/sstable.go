@@ -3,9 +3,13 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync/atomic"
+
+	"github.com/jateen67/kv/utils"
 )
 
 const (
@@ -22,19 +26,20 @@ type SSTable struct {
 	sstCounter uint32
 	minKey     string
 	maxKey     string
+	sparseKeys []sparseIndex
 }
 
-func InitSSTableOnDisk(directory string, entries []Record) error {
+func InitSSTableOnDisk(directory string, entries []Record) (*SSTable, error) {
 	atomic.AddUint32(&ssTableCounter, 1)
 	table := &SSTable{
 		sstCounter: ssTableCounter,
 	}
 	err := table.initTableFiles(directory)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = writeEntriesToSST(entries, table)
-	return err
+	return table, err
 }
 
 func (sst *SSTable) initTableFiles(directory string) error {
@@ -65,7 +70,6 @@ type sparseIndex struct {
 
 func writeEntriesToSST(entries []Record, table *SSTable) error {
 	buf := new(bytes.Buffer)
-	var sparseKeys []sparseIndex
 	var byteOffsetCounter uint32
 
 	// Keep track of min, max for searching in the case our desired key is outside these bounds
@@ -75,7 +79,7 @@ func writeEntriesToSST(entries []Record, table *SSTable) error {
 	// * every 100th key will be put into the sparse index
 	for i := range entries {
 		if i%SPARSE_INDEX_SAMPLE_SIZE == 0 {
-			sparseKeys = append(sparseKeys, sparseIndex{
+			table.sparseKeys = append(table.sparseKeys, sparseIndex{
 				keySize:    entries[i].Header.KeySize,
 				key:        entries[i].Key,
 				byteOffset: byteOffsetCounter,
@@ -91,11 +95,11 @@ func writeEntriesToSST(entries []Record, table *SSTable) error {
 	if err := writeToFile(buf.Bytes(), table.dataFile); err != nil {
 		return err
 	}
-	err := populateSparseIndex(sparseKeys, table.indexFile)
+	err := populateSparseIndexFile(table.sparseKeys, table.indexFile)
 	return err
 }
 
-func populateSparseIndex(indices []sparseIndex, indexFile *os.File) error {
+func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) error {
 	// encode and write to index file
 	buf := new(bytes.Buffer)
 	for i := range indices {
@@ -118,4 +122,81 @@ func writeToFile(data []byte, file *os.File) error {
 		return err
 	}
 	return nil
+}
+
+func (sst *SSTable) Get(key string) (string, error) {
+	if key < sst.minKey || key > sst.maxKey {
+		return "<!>", utils.ErrKeyNotWithinTable
+	}
+
+	// Get sparse index and move to offset
+	currOffset := sst.getCandidateByteOffset(key)
+	if _, err := sst.dataFile.Seek(int64(currOffset), 0); err != nil {
+		return "", err
+	}
+
+	var keyFound = false
+	var eofErr error
+	for keyFound == false || eofErr == nil {
+		// set up entry for the header
+		currEntry := make([]byte, 17)
+		_, err := io.ReadFull(sst.dataFile, currEntry)
+		if errors.Is(err, io.EOF) {
+			eofErr = err
+			fmt.Println("LOG: END OF FILE")
+			return "EOF", err
+		}
+
+		h := &Header{}
+		h.decodeHeader(currEntry)
+
+		// move the cursor so we can read the rest of the record
+		currOffset += headerSize
+		sst.dataFile.Seek(int64(currOffset), 0)
+		// set up []byte for the rest of the record
+		currRecord := make([]byte, h.KeySize+h.ValueSize)
+		if _, err := io.ReadFull(sst.dataFile, currRecord); err != nil {
+			fmt.Println("LOG: READFULL ERR:", err)
+			return "", err
+		}
+		// append both []byte together in order to decode as a whole
+		currEntry = append(currEntry, currRecord...) // full size of the record
+		r := &Record{}
+		r.DecodeKV(currEntry)
+
+		if r.Key == key {
+			fmt.Printf("LOG: FOUND KEY %s -> %s\n", key, r.Value)
+			keyFound = true
+			return r.Value, nil
+		} else if r.Key > key {
+			fmt.Println("LOG: SEARCH OVEREXTENSION, RETURNING AS KEY NOT FOUND.")
+			// return early
+			// this works b/c since our data is sorted, if the curr key is > target key,
+			// ..then the key is not in this table
+			return "<!>", utils.ErrKeyNotFound
+		}
+
+		// else, keep iterating & looking
+		currOffset += r.Header.KeySize + r.Header.ValueSize
+		sst.dataFile.Seek(int64(currOffset), 0)
+	}
+
+	return "<!>", utils.ErrKeyNotFound
+}
+
+func (sst *SSTable) getCandidateByteOffset(target string) uint32 {
+	low := 0
+	high := len(sst.sparseKeys) - 1
+
+	for low < high {
+		mid := (low + high) / 2
+		if target < sst.sparseKeys[mid].key {
+			high = mid - 1
+		} else if target > sst.sparseKeys[mid].key {
+			low = mid + 1
+		} else {
+			return sst.sparseKeys[mid].byteOffset
+		}
+	}
+	return sst.sparseKeys[low].byteOffset
 }
