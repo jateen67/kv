@@ -19,7 +19,7 @@ type DiskStore struct {
 type Operation int
 
 const (
-	PUT Operation = iota
+	SET Operation = iota
 	GET
 	DELETE
 )
@@ -82,7 +82,7 @@ func (ds *DiskStore) Set(key string, value string) error {
 	ds.memtable.Set(key, record)
 
 	buf := new(bytes.Buffer)
-	buf.WriteByte(byte(PUT))
+	buf.WriteByte(byte(SET))
 	if err := record.EncodeKV(buf); err != nil {
 		return utils.ErrEncodingKVFailed
 	}
