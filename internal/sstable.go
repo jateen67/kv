@@ -29,6 +29,7 @@ type SSTable struct {
 	sstCounter  uint32
 	minKey      string
 	maxKey      string
+	totalSize   uint32
 	sparseKeys  []sparseIndex
 }
 
@@ -90,6 +91,7 @@ func writeEntriesToSST(entries []Record, table *SSTable) error {
 
 	// * every 100th key will be put into the sparse index
 	for i := range entries {
+		table.totalSize += entries[i].TotalSize
 		if i%SPARSE_INDEX_SAMPLE_SIZE == 0 {
 			table.sparseKeys = append(table.sparseKeys, sparseIndex{
 				keySize:    entries[i].Header.KeySize,

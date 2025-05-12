@@ -12,7 +12,7 @@ import (
 type DiskStore struct {
 	memtable           *Memtable
 	wal                *os.File
-	levels             [][]SSTable
+	buckets            []Bucket
 	immutableMemtables []Memtable
 }
 
@@ -24,7 +24,7 @@ const (
 	DELETE
 )
 
-const FlushSizeThreshold = 100_000
+const FlushSizeThreshold = 3_000
 
 func NewDiskStore() (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable()}
@@ -45,12 +45,14 @@ func (ds *DiskStore) Get(key string) (string, error) {
 		return "<!>", err
 	}
 
-	for i := len(ds.levels[0]) - 1; i >= 0; i-- {
-		value, err := ds.levels[0][i].Get(key)
-		if errors.Is(err, utils.ErrKeyNotWithinTable) {
-			continue
+	for i := 0; i < len(ds.buckets); i++ {
+		for j := 0; j < len(ds.buckets[i].tables); j++ {
+			value, err := ds.buckets[i].tables[j].Get(key)
+			if errors.Is(err, utils.ErrKeyNotWithinTable) {
+				continue
+			}
+			return value, err
 		}
-		return value, err
 	}
 
 	return "<!not_found>", utils.ErrKeyNotFound
@@ -151,12 +153,12 @@ func (ds *DiskStore) FlushMemtable() {
 			panic(err)
 		}
 
-		if len(ds.levels) == 0 {
-			ds.levels = append(ds.levels, []SSTable{*sstable})
+		if len(ds.buckets) == 0 {
+			ds.buckets = append(ds.buckets, *InitBucket(sstable))
 		} else {
-			ds.levels[0] = append(ds.levels[0], *sstable)
+			ds.buckets[0].AppendTableToBucket(sstable)
 		}
-		ds.immutableMemtables = ds.immutableMemtables[:i]
+		ds.immutableMemtables = ds.immutableMemtables[:i] // basically removing a "queued" memtable since its flushed
 	}
 }
 
