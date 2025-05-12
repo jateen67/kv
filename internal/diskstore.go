@@ -109,7 +109,7 @@ func (ds *DiskStore) Get(key string) (string, error) {
 		return "<!>", err
 	}
 
-	for i := range ds.levels[0] {
+	for i := len(ds.levels[0]) - 1; i >= 0; i-- {
 		value, err := ds.levels[0][i].Get(key)
 		if errors.Is(err, utils.ErrKeyNotWithinTable) {
 			continue
