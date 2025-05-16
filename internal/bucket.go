@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 )
 
@@ -18,8 +19,6 @@ type Bucket struct {
 }
 
 const DefaultTableSizeInBytes uint32 = 3_000
-const MinThreshold = 5
-const MaxThreshold = 12
 
 func InitBucket(table *SSTable) *Bucket {
 	bucket := &Bucket{
@@ -32,8 +31,23 @@ func InitBucket(table *SSTable) *Bucket {
 	return bucket
 }
 
+func InitEmptyBucket() *Bucket {
+	return &Bucket{
+		minTableSize: DefaultTableSizeInBytes,
+		bucketLow:    0.5,
+		bucketHigh:   1.5,
+		tables:       []SSTable{},
+	}
+}
+
 func (b *Bucket) AppendTableToBucket(table *SSTable) {
 	if table.totalSize < b.minTableSize {
+		return
+	}
+
+	if len(b.tables) == 0 {
+		b.tables = append(b.tables, *table)
+		b.calculateAvgBucketSize()
 		return
 	}
 
@@ -41,13 +55,13 @@ func (b *Bucket) AppendTableToBucket(table *SSTable) {
 	higherSizeThreshold := uint32(b.bucketHigh * float32(b.avgBucketSize)) // 50% higher than avg size
 
 	// calculate low and high thresholds-- this avoids a skewed distribution of SSTable sizes within a given bucket
-	if lowerSizeThreshold < table.totalSize && table.totalSize < higherSizeThreshold {
+	if lowerSizeThreshold <= table.totalSize && table.totalSize <= higherSizeThreshold {
 		b.tables = append(b.tables, *table)
+	} else {
+		fmt.Println("Could not append table. Out of range")
 	}
-	// update avg size on each append
+	//update avg size on each append
 	b.calculateAvgBucketSize()
-
-	b.TriggerCompaction()
 }
 
 func (b *Bucket) calculateAvgBucketSize() {
@@ -58,11 +72,14 @@ func (b *Bucket) calculateAvgBucketSize() {
 	b.avgBucketSize = sum / uint32(len(b.tables))
 }
 
-func (b *Bucket) TriggerCompaction() {
-	if len(b.tables) < MinThreshold {
-		return
+func (b *Bucket) NeedsCompaction(minNumTables, maxNumTables int) bool {
+	if len(b.tables) >= minNumTables && len(b.tables) <= maxNumTables {
+		return true
 	}
+	return false
+}
 
+func (b *Bucket) TriggerCompaction() *SSTable {
 	var allSortedRuns [][]Record
 
 	for i := range b.tables {
@@ -122,6 +139,12 @@ func (b *Bucket) TriggerCompaction() {
 
 	filterAndDeleteTombstones(&finalSortedRun)
 	removeOutdatedEntires(&finalSortedRun)
+
+	// once the new merged table gets created, add it to a new bucket
+	mergedSSTable, _ := InitSSTableOnDisk("storage", finalSortedRun)
+	// now we need to delete the old sstables from disk to free up space
+	deleteOldSSTables(b.tables)
+	return mergedSSTable
 }
 
 func filterAndDeleteTombstones(sortedRun *[]Record) {
@@ -169,4 +192,18 @@ func removeOutdatedEntires(sortedRun *[]Record) {
 			}
 		}
 	}
+}
+
+func deleteOldSSTables(tables []SSTable) error {
+	for i := range tables {
+		files := []string{tables[i].dataFile.Name(), tables[i].indexFile.Name(), tables[i].bloomFilter.file.Name()}
+
+		for _, file := range files {
+			if err := os.Remove(file); err != nil {
+				return err
+			}
+		}
+	}
+	tables = []SSTable{} // empty the slice
+	return nil
 }
