@@ -14,6 +14,7 @@ import (
 type Service struct {
 	addr  string
 	ln    net.Listener
+	mux   *http.ServeMux
 	store internal.Store
 }
 
@@ -26,6 +27,8 @@ func NewService(addr string, store internal.Store) *Service {
 }
 
 func (s *Service) Start() error {
+	s.mux = http.NewServeMux()
+
 	server := http.Server{
 		Handler: s,
 	}
@@ -36,7 +39,7 @@ func (s *Service) Start() error {
 	}
 
 	s.ln = ln
-	http.Handle("/", s)
+	s.mux.Handle("/", s)
 
 	go func() {
 		err := server.Serve(s.ln)
