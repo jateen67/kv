@@ -33,8 +33,8 @@ func (m *Memtable) Get(key string) (Record, error) {
 
 var recCounter int = 0
 
-func (m *Memtable) Set(key string, value Record) {
-	m.data.Put(key, value)
+func (m *Memtable) Set(key *string, value *Record) {
+	m.data.Put(*key, *value)
 	recCounter++
 	m.totalSize += value.TotalSize
 }
