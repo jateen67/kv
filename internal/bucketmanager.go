@@ -9,7 +9,7 @@ type BucketManager struct {
 	maxTableThreshold int
 }
 
-// Initialize manager + first level of buckets
+// InitBucketManager Initializes manager + first level of buckets
 func InitBucketManager() *BucketManager {
 	manager := &BucketManager{
 		buckets:           make(map[int]*Bucket),
@@ -18,6 +18,7 @@ func InitBucketManager() *BucketManager {
 		maxTableThreshold: 12,
 	}
 	manager.buckets[1] = InitEmptyBucket()
+
 	return manager
 }
 
@@ -61,11 +62,9 @@ func (bm *BucketManager) RetrieveKey(key string) (string, error) {
 
 func (bm *BucketManager) compact(level int) {
 	bkt := bm.buckets[level]
-	// ONLY triggers if threshold is reached in the bucket
-	mergedTable := bkt.TriggerCompaction()
+	mergedTable := bkt.TriggerCompaction() // ONLY triggers if threshold is reached in the bucket
 
 	if mergedTable != nil {
-		// Take this table and throw it into a new level
 		bm.InsertTable(mergedTable)
 	}
 }

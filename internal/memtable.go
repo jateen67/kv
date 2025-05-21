@@ -39,18 +39,13 @@ func (m *Memtable) Set(key *string, value *Record) {
 	m.totalSize += value.TotalSize
 }
 
-func (m *Memtable) Flush(dir string) (*SSTable, error) {
+func (m *Memtable) Flush(dir string) *SSTable {
 	sortedEntries := m.returnAllRecordsInSortedOrder()
-	table, err := InitSSTableOnDisk(dir, castToRecordSlice(sortedEntries))
-	if err != nil {
-		return nil, err
-	}
-	return table, nil
+	return InitSSTableOnDisk(dir, castToRecordSlice(sortedEntries))
 }
 
 func (m *Memtable) returnAllRecordsInSortedOrder() []any {
-	data := inorderRBT(m.data.Root, make([]any, 0))
-	return data
+	return inorderRBT(m.data.Root, make([]any, 0))
 }
 
 func castToRecordSlice(interfaceSlice []any) []Record {

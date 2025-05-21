@@ -13,8 +13,6 @@ import (
 )
 
 func main() {
-	intro := "\n ▗▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖ ▗▄▄▖▗▄▄▄▖ ▗▄▄▖\n▐▌   ▐▌   ▐▛▚▖▐▌▐▌   ▐▌     █  ▐▌   \n▐▌▝▜▌▐▛▀▀▘▐▌ ▝▜▌▐▛▀▀▘ ▝▀▚▖  █   ▝▀▚▖\n▝▚▄▞▘▐▙▄▄▖▐▌  ▐▌▐▙▄▄▖▗▄▄▞▘▗▄█▄▖▗▄▄▞▘\n                                    \n                                    \n                                    "
-
 	commands := "Commands:\n" +
 		"\t- set     <key> <value>   : insert a key-value pair\n" +
 		"\t- get     <key>           : get a key value\n" +
@@ -22,9 +20,10 @@ func main() {
 		"\t- ctrl+c                  : exit\n" +
 		"\t- help                    : show this message"
 
-	store, _ := internal.NewDiskStore()
-
-	fmt.Println(intro)
+	store, err := internal.NewDiskStore()
+	if err != nil {
+		panic(err)
+	}
 	fmt.Println(commands)
 
 	scanner := bufio.NewScanner(os.Stdin)

@@ -22,23 +22,24 @@ const DefaultTableSizeInBytes uint32 = 3_000
 
 func InitBucket(table *SSTable) *Bucket {
 	bucket := &Bucket{
-		minTableSize:  DefaultTableSizeInBytes,
-		avgBucketSize: DefaultTableSizeInBytes,
-		bucketLow:     0.5,
-		bucketHigh:    1.5,
-		tables:        []SSTable{},
+		minTableSize: DefaultTableSizeInBytes,
+		bucketLow:    0.5,
+		bucketHigh:   1.5,
+		tables:       []SSTable{*table},
 	}
 	bucket.calculateAvgBucketSize()
 	return bucket
 }
 
 func InitEmptyBucket() *Bucket {
-	return &Bucket{
-		minTableSize: DefaultTableSizeInBytes,
-		bucketLow:    0.5,
-		bucketHigh:   1.5,
-		tables:       []SSTable{},
+	bucket := &Bucket{
+		minTableSize:  DefaultTableSizeInBytes,
+		avgBucketSize: DefaultTableSizeInBytes,
+		bucketLow:     0.5,
+		bucketHigh:    1.5,
+		tables:        []SSTable{},
 	}
+	return bucket
 }
 
 func (b *Bucket) AppendTableToBucket(table *SSTable) {
@@ -61,6 +62,7 @@ func (b *Bucket) AppendTableToBucket(table *SSTable) {
 	} else {
 		fmt.Println("Could not append table. Out of range")
 	}
+
 	//update avg size on each append
 	b.calculateAvgBucketSize()
 }
@@ -121,7 +123,6 @@ func (b *Bucket) TriggerCompaction() *SSTable {
 
 	// * now we have all our sorted runs
 	h := MinRecordHeap{}
-
 	for i := range allSortedRuns {
 		for j := range allSortedRuns[i] {
 			heap.Push(&h, allSortedRuns[i][j])
@@ -139,8 +140,9 @@ func (b *Bucket) TriggerCompaction() *SSTable {
 	removeOutdatedEntires(&finalSortedRun)
 
 	// once the new merged table gets created, add it to a new bucket
-	mergedSSTable, _ := InitSSTableOnDisk("storage", finalSortedRun)
-	// now we need to delete the old sstables from disk to free up space
+	mergedSSTable := InitSSTableOnDisk("storage", finalSortedRun)
+
+	// ! now we need to delete the old sstables from disk to free up space
 	deleteOldSSTables(&b.tables)
 	return mergedSSTable
 }
@@ -148,12 +150,14 @@ func (b *Bucket) TriggerCompaction() *SSTable {
 func filterAndDeleteTombstones(sortedRun *[]Record) {
 	var collectedTombstones []string
 
+	// collect all tombstones to delete
 	for i := range *sortedRun {
 		if (*sortedRun)[i].Header.Tombstone == 1 {
 			collectedTombstones = append(collectedTombstones, (*sortedRun)[i].Key)
 		}
 	}
 
+	// now look at every key in collectedTombstones and delete it from the sorted run
 	for i := 0; i < len(*sortedRun); {
 		if slices.Contains(collectedTombstones, (*sortedRun)[i].Key) {
 			if i < len(*sortedRun)-1 {
@@ -168,9 +172,8 @@ func filterAndDeleteTombstones(sortedRun *[]Record) {
 }
 
 func removeOutdatedEntires(sortedRun *[]Record) {
-	// take every entry -> append to a map
-	// if value for a given map key is > 1 then sort the value (which will be a slice)
-	// & delete all values except the last 1 in the overall slice
+	// take every entry -> append to a map, if value for a given map key is > 1,
+	// then sort the value (which will be a slice) & delete all values except the last 1 in the overall slice
 
 	var tempMap = make(map[string][]Record)
 

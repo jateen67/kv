@@ -33,17 +33,14 @@ type SSTable struct {
 	sparseKeys  []sparseIndex
 }
 
-func InitSSTableOnDisk(directory string, entries []Record) (*SSTable, error) {
+func InitSSTableOnDisk(directory string, entries []Record) *SSTable {
 	atomic.AddUint32(&ssTableCounter, 1)
 	table := &SSTable{
 		sstCounter: ssTableCounter,
 	}
-	err := table.initTableFiles(directory)
-	if err != nil {
-		return nil, err
-	}
-	err = writeEntriesToSST(entries, table)
-	return table, err
+	table.initTableFiles(directory)
+	writeEntriesToSST(entries, table)
+	return table
 }
 
 func (sst *SSTable) initTableFiles(directory string) error {
@@ -81,7 +78,7 @@ type sparseIndex struct {
 	byteOffset uint32
 }
 
-func writeEntriesToSST(entries []Record, table *SSTable) error {
+func writeEntriesToSST(entries []Record, table *SSTable) {
 	buf := new(bytes.Buffer)
 	var byteOffsetCounter uint32
 
@@ -100,28 +97,21 @@ func writeEntriesToSST(entries []Record, table *SSTable) error {
 			})
 		}
 		byteOffsetCounter += entries[i].TotalSize
-		err := entries[i].EncodeKV(buf)
-		if err != nil {
-			return err
-		}
+		entries[i].EncodeKV(buf)
 	}
 	// after encoding each entry, dump into the SSTable
 	if err := writeToFile(buf.Bytes(), table.dataFile); err != nil {
-		return err
+		fmt.Println("write to sst err:", err)
 	}
 
 	// Set up sparse index
-	err := populateSparseIndexFile(table.sparseKeys, table.indexFile)
-	if err != nil {
-		return err
-	}
+	populateSparseIndexFile(table.sparseKeys, table.indexFile)
 	// Set up + populate bloom filter
 	table.bloomFilter.InitBloomFilterAttrs(uint32(len(entries)))
-	err = populateBloomFilter(entries, table.bloomFilter)
-	return err
+	populateBloomFilter(entries, table.bloomFilter)
 }
 
-func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) error {
+func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) {
 	// encode and write to index file
 	buf := new(bytes.Buffer)
 	for i := range indices {
@@ -130,11 +120,12 @@ func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) error {
 		binary.Write(buf, binary.LittleEndian, &indices[i].byteOffset)
 	}
 
-	err := writeToFile(buf.Bytes(), indexFile)
-	return err
+	if err := writeToFile(buf.Bytes(), indexFile); err != nil {
+		fmt.Println("write to indexfile err:", err)
+	}
 }
 
-func populateBloomFilter(entries []Record, bloomFilter *BloomFilter) error {
+func populateBloomFilter(entries []Record, bloomFilter *BloomFilter) {
 	for i := range entries {
 		bloomFilter.Add(entries[i].Key)
 	}
@@ -148,8 +139,9 @@ func populateBloomFilter(entries []Record, bloomFilter *BloomFilter) error {
 		}
 	}
 
-	err := writeToFile(bfBytes, bloomFilter.file)
-	return err
+	if err := writeToFile(bfBytes, bloomFilter.file); err != nil {
+		fmt.Println("write to bloomfile err:", err)
+	}
 }
 
 func writeToFile(data []byte, file *os.File) error {

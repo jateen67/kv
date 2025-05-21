@@ -28,6 +28,10 @@ const FlushSizeThreshold = 1024 * 1024 * 256
 
 func NewDiskStore() (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable(), bucketManager: InitBucketManager()}
+	err := os.MkdirAll("../log", 0755)
+	if err != nil {
+		return nil, err
+	}
 	logFile, err := os.OpenFile("../log/wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
@@ -122,11 +126,7 @@ func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 
 func (ds *DiskStore) FlushMemtable() {
 	for i := range ds.immutableMemtables {
-		sstable, err := ds.immutableMemtables[i].Flush("storage")
-		if err != nil {
-			panic(err)
-		}
-
+		sstable := ds.immutableMemtables[i].Flush("storage")
 		ds.bucketManager.InsertTable(sstable)
 		ds.immutableMemtables = ds.immutableMemtables[:i] // basically removing a "queued" memtable since its flushed
 	}
