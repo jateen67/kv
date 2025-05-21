@@ -140,7 +140,7 @@ func (b *Bucket) TriggerCompaction() *SSTable {
 	removeOutdatedEntires(&finalSortedRun)
 
 	// once the new merged table gets created, add it to a new bucket
-	mergedSSTable := InitSSTableOnDisk("storage", finalSortedRun)
+	mergedSSTable := InitSSTableOnDisk("storage", &finalSortedRun)
 
 	// ! now we need to delete the old sstables from disk to free up space
 	deleteOldSSTables(&b.tables)

@@ -42,9 +42,9 @@ func NewDiskStore() (*DiskStore, error) {
 
 func (ds *DiskStore) Get(key string) (string, error) {
 	// log 'GET' operation first
-	ds.appendOperationToWAL(GET, Record{Key: key})
+	//ds.appendOperationToWAL(GET, &Record{Key: key})
 
-	record, err := ds.memtable.Get(key)
+	record, err := ds.memtable.Get(&key)
 	// if not found in memtable search in sstable
 	if err == nil {
 		return record.Value, nil
@@ -52,38 +52,39 @@ func (ds *DiskStore) Get(key string) (string, error) {
 		return "<!>", err
 	}
 
-	return ds.bucketManager.RetrieveKey(key)
+	return ds.bucketManager.RetrieveKey(&key)
 }
 
-func (ds *DiskStore) Set(key string, value string) error {
-	if len(key) == 0 {
+func (ds *DiskStore) Set(key *string, value *string) error {
+	if len(*key) == 0 {
 		return errors.New("set() error: key empty")
 	}
-	if len(value) == 0 {
+	if len(*value) == 0 {
 		return errors.New("set() error: value empty")
 	}
 
 	header := Header{
 		CheckSum:  0,
 		Tombstone: 0,
-		TimeStamp: 123,
-		KeySize:   uint32(len(key)),
-		ValueSize: uint32(len(value)),
+		TimeStamp: uint32(time.Now().Unix()),
+		KeySize:   uint32(len(*key)),
+		ValueSize: uint32(len(*value)),
 	}
 	record := &Record{
 		Header:    header,
-		Key:       key,
-		Value:     value,
+		Key:       *key,
+		Value:     *value,
 		TotalSize: headerSize + header.KeySize + header.ValueSize,
 	}
 	record.Header.CheckSum = record.CalculateChecksum()
 
-	ds.memtable.Set(&key, record)
-	ds.appendOperationToWAL(SET, *record)
+	ds.memtable.Set(key, record)
+	// TODO: Batch WAL appends to improve performance, constant disk writes are too expensive
+	// ds.appendOperationToWAL(PUT, record)
 
 	// Automatically flush when memtable reaches certain threshold
 	if ds.memtable.totalSize >= FlushSizeThreshold {
-		ds.immutableMemtables = append(ds.immutableMemtables, deepCopyMemtable(*ds.memtable))
+		ds.immutableMemtables = append(ds.immutableMemtables, *deepCopyMemtable(ds.memtable))
 		ds.memtable.clear()
 		ds.FlushMemtable()
 	}
@@ -108,7 +109,7 @@ func (ds *DiskStore) Delete(key string) error {
 	deletionRecord.CalculateChecksum()
 
 	ds.memtable.Set(&key, &deletionRecord)
-	ds.appendOperationToWAL(DELETE, deletionRecord)
+	ds.appendOperationToWAL(DELETE, &deletionRecord)
 
 	return nil
 }
@@ -132,7 +133,7 @@ func (ds *DiskStore) FlushMemtable() {
 	}
 }
 
-func deepCopyMemtable(memtable Memtable) Memtable {
+func deepCopyMemtable(memtable *Memtable) *Memtable {
 	deepCopy := NewMemtable()
 	deepCopy.totalSize = memtable.totalSize
 
@@ -142,7 +143,7 @@ func deepCopyMemtable(memtable Memtable) Memtable {
 		deepCopy.data.Put(keys[i], values[i])
 	}
 
-	return *deepCopy
+	return deepCopy
 }
 
 func (ds *DiskStore) Close() bool {
@@ -150,7 +151,7 @@ func (ds *DiskStore) Close() bool {
 	return true
 }
 
-func (ds *DiskStore) appendOperationToWAL(op Operation, record Record) error {
+func (ds *DiskStore) appendOperationToWAL(op Operation, record *Record) error {
 	buf := new(bytes.Buffer)
 	// Store operation as only 1 byte (only WAL entries will have this extra byte)
 	buf.WriteByte(byte(op))

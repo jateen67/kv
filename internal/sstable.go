@@ -33,7 +33,7 @@ type SSTable struct {
 	sparseKeys  []sparseIndex
 }
 
-func InitSSTableOnDisk(directory string, entries []Record) *SSTable {
+func InitSSTableOnDisk(directory string, entries *[]Record) *SSTable {
 	atomic.AddUint32(&ssTableCounter, 1)
 	table := &SSTable{
 		sstCounter: ssTableCounter,
@@ -78,26 +78,26 @@ type sparseIndex struct {
 	byteOffset uint32
 }
 
-func writeEntriesToSST(entries []Record, table *SSTable) {
+func writeEntriesToSST(entries *[]Record, table *SSTable) {
 	buf := new(bytes.Buffer)
 	var byteOffsetCounter uint32
 
 	// Keep track of min, max for searching in the case our desired key is outside these bounds
-	table.minKey = entries[0].Key
-	table.maxKey = entries[len(entries)-1].Key
+	table.minKey = (*entries)[0].Key
+	table.maxKey = (*entries)[len(*entries)-1].Key
 
 	// * every 100th key will be put into the sparse index
-	for i := range entries {
-		table.totalSize += entries[i].TotalSize
+	for i := range *entries {
+		table.totalSize += (*entries)[i].TotalSize
 		if i%SPARSE_INDEX_SAMPLE_SIZE == 0 {
 			table.sparseKeys = append(table.sparseKeys, sparseIndex{
-				keySize:    entries[i].Header.KeySize,
-				key:        entries[i].Key,
+				keySize:    (*entries)[i].Header.KeySize,
+				key:        (*entries)[i].Key,
 				byteOffset: byteOffsetCounter,
 			})
 		}
-		byteOffsetCounter += entries[i].TotalSize
-		entries[i].EncodeKV(buf)
+		byteOffsetCounter += (*entries)[i].TotalSize
+		(*entries)[i].EncodeKV(buf)
 	}
 	// after encoding each entry, dump into the SSTable
 	if err := writeToFile(buf.Bytes(), table.dataFile); err != nil {
@@ -105,19 +105,19 @@ func writeEntriesToSST(entries []Record, table *SSTable) {
 	}
 
 	// Set up sparse index
-	populateSparseIndexFile(table.sparseKeys, table.indexFile)
+	populateSparseIndexFile(&table.sparseKeys, table.indexFile)
 	// Set up + populate bloom filter
-	table.bloomFilter.InitBloomFilterAttrs(uint32(len(entries)))
+	table.bloomFilter.InitBloomFilterAttrs(uint32(len(*entries)))
 	populateBloomFilter(entries, table.bloomFilter)
 }
 
-func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) {
+func populateSparseIndexFile(indices *[]sparseIndex, indexFile *os.File) {
 	// encode and write to index file
 	buf := new(bytes.Buffer)
-	for i := range indices {
-		binary.Write(buf, binary.LittleEndian, &indices[i].keySize)
-		buf.WriteString(indices[i].key)
-		binary.Write(buf, binary.LittleEndian, &indices[i].byteOffset)
+	for i := range *indices {
+		binary.Write(buf, binary.LittleEndian, (*indices)[i].keySize)
+		buf.WriteString((*indices)[i].key)
+		binary.Write(buf, binary.LittleEndian, (*indices)[i].byteOffset)
 	}
 
 	if err := writeToFile(buf.Bytes(), indexFile); err != nil {
@@ -125,9 +125,9 @@ func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) {
 	}
 }
 
-func populateBloomFilter(entries []Record, bloomFilter *BloomFilter) {
-	for i := range entries {
-		bloomFilter.Add(entries[i].Key)
+func populateBloomFilter(entries *[]Record, bloomFilter *BloomFilter) {
+	for i := range *entries {
+		bloomFilter.Add((*entries)[i].Key)
 	}
 
 	bfBytes := make([]byte, bloomFilter.bitSetSize)

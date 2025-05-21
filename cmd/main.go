@@ -39,7 +39,7 @@ func main() {
 			} else {
 				key := args[1]
 				val := args[2]
-				store.Set(key, val)
+				store.Set(&key, &val)
 			}
 		case "get":
 			if len(args) != 2 {

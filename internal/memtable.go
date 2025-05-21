@@ -23,8 +23,8 @@ func NewMemtable() *Memtable {
 	}
 }
 
-func (m *Memtable) Get(key string) (Record, error) {
-	val, found := m.data.Get(key)
+func (m *Memtable) Get(key *string) (Record, error) {
+	val, found := m.data.Get(*key)
 	if !found {
 		return Record{}, utils.ErrKeyNotFound
 	}
@@ -41,23 +41,23 @@ func (m *Memtable) Set(key *string, value *Record) {
 
 func (m *Memtable) Flush(dir string) *SSTable {
 	sortedEntries := m.returnAllRecordsInSortedOrder()
-	return InitSSTableOnDisk(dir, castToRecordSlice(sortedEntries))
+	return InitSSTableOnDisk(dir, castToRecordSlice(&sortedEntries))
 }
 
 func (m *Memtable) returnAllRecordsInSortedOrder() []any {
 	return inorderRBT(m.data.Root, make([]any, 0))
 }
 
-func castToRecordSlice(interfaceSlice []any) []Record {
-	recordSlice := make([]Record, len(interfaceSlice))
-	for i, iface := range interfaceSlice {
+func castToRecordSlice(interfaceSlice *[]any) *[]Record {
+	recordSlice := make([]Record, len(*interfaceSlice))
+	for i, iface := range *interfaceSlice {
 		record, ok := iface.(Record)
 		if !ok {
 			fmt.Errorf("element %d is not a Record", i)
 		}
 		recordSlice[i] = record
 	}
-	return recordSlice
+	return &recordSlice
 }
 
 func inorderRBT(node *rbt.Node, data []interface{}) []interface{} {
