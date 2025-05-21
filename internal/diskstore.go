@@ -28,11 +28,11 @@ const FlushSizeThreshold = 1024 * 1024 * 256
 
 func NewDiskStore() (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable(), bucketManager: InitBucketManager()}
-	err := os.MkdirAll("../log", 0755)
+	err := os.MkdirAll("log", 0755)
 	if err != nil {
 		return nil, err
 	}
-	logFile, err := os.OpenFile("../log/wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	logFile, err := os.OpenFile("log/wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}
