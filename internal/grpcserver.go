@@ -20,7 +20,7 @@ func (d *dataMigrationServer) MigrateKeyValuePairs(ctx context.Context, req *pro
 	var migrationResults []*proto.MigrationResult
 
 	for i := range req.KvPairs {
-		fmt.Println("storing data into node at address ", d.underlyingNode.addr)
+		fmt.Println("storing data into node at address ", d.underlyingNode.Addr)
 		d.underlyingNode.Store.PutRecordFromGRPC(req.KvPairs[i].Record)
 
 		res := proto.MigrationResult{
