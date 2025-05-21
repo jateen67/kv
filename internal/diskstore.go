@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jateen67/kv/utils"
 )
 
 type DiskStore struct {
+	mu                 sync.Mutex
 	memtable           *Memtable
 	wal                *os.File
 	bucketManager      *BucketManager
@@ -27,6 +29,7 @@ const (
 
 const FlushSizeThreshold = 1024 * 1024 * 256
 
+// start a single-node store
 func NewDiskStore() (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable(), bucketManager: InitBucketManager()}
 	err := os.MkdirAll("log", 0755)
@@ -41,6 +44,7 @@ func NewDiskStore() (*DiskStore, error) {
 	return ds, err
 }
 
+// start up a cluster of N nodes
 func NewDiskStoreDistributed(numOfNodes int) *Cluster {
 	cluster := Cluster{}
 	cluster.initNodes(numOfNodes)
@@ -49,6 +53,8 @@ func NewDiskStoreDistributed(numOfNodes int) *Cluster {
 }
 
 func (ds *DiskStore) Get(key string) (string, error) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
 	// log 'GET' operation first
 	//ds.appendOperationToWAL(GET, &Record{Key: key})
 
@@ -64,6 +70,9 @@ func (ds *DiskStore) Get(key string) (string, error) {
 }
 
 func (ds *DiskStore) Set(key *string, value *string) error {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
 	if len(*key) == 0 {
 		return errors.New("set() error: key empty")
 	}
@@ -100,6 +109,9 @@ func (ds *DiskStore) Set(key *string, value *string) error {
 }
 
 func (ds *DiskStore) Delete(key string) error {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
 	// appending a new entry but with a tombstone value and empty key
 	value := ""
 	header := Header{
