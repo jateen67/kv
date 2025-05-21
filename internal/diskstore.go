@@ -37,6 +37,9 @@ func NewDiskStore() (*DiskStore, error) {
 }
 
 func (ds *DiskStore) Get(key string) (string, error) {
+	// log 'GET' operation first
+	ds.appendOperationToWAL(GET, Record{Key: key})
+
 	record, err := ds.memtable.Get(key)
 	// if not found in memtable search in sstable
 	if err == nil {
@@ -45,7 +48,7 @@ func (ds *DiskStore) Get(key string) (string, error) {
 		return "<!>", err
 	}
 
-	return "<!not_found>", utils.ErrKeyNotFound
+	return ds.bucketManager.RetrieveKey(key)
 }
 
 func (ds *DiskStore) Set(key string, value string) error {
@@ -73,16 +76,7 @@ func (ds *DiskStore) Set(key string, value string) error {
 
 	ds.memtable.Set(key, record)
 
-	buf := new(bytes.Buffer)
-	buf.WriteByte(byte(SET))
-	if err := record.EncodeKV(buf); err != nil {
-		return utils.ErrEncodingKVFailed
-	}
-
-	err := ds.writeToFile(buf.Bytes(), ds.wal)
-	if err != nil {
-		return err
-	}
+	ds.appendOperationToWAL(SET, record)
 
 	// Automatically flush when memtable reaches certain threshold
 	if ds.memtable.totalSize >= FlushSizeThreshold {
@@ -112,14 +106,9 @@ func (ds *DiskStore) Delete(key string) error {
 
 	ds.memtable.Set(key, deletionRecord)
 
-	buf := new(bytes.Buffer)
-	buf.WriteByte(byte(DELETE))
-	if encodeErr := deletionRecord.EncodeKV(buf); encodeErr != nil {
-		return utils.ErrEncodingKVFailed
-	}
+	ds.appendOperationToWAL(DELETE, deletionRecord)
 
-	err := ds.writeToFile(buf.Bytes(), ds.wal)
-	return err
+	return nil
 }
 
 func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
@@ -156,4 +145,18 @@ func deepCopyMemtable(memtable Memtable) Memtable {
 	}
 
 	return *deepCopy
+}
+
+func (ds *DiskStore) appendOperationToWAL(op Operation, record Record) error {
+	buf := new(bytes.Buffer)
+	// Store operation as only 1 byte (only WAL entries will have this extra byte)
+	buf.WriteByte(byte(op))
+
+	// encode the entire key, value entry
+	if encodeErr := record.EncodeKV(buf); encodeErr != nil {
+		return utils.ErrEncodingKVFailed
+	}
+
+	// store in WAL
+	return writeToFile(buf.Bytes(), ds.wal)
 }

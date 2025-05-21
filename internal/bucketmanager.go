@@ -1,5 +1,7 @@
 package internal
 
+import "github.com/jateen67/kv/utils"
+
 type BucketManager struct {
 	buckets           map[int]*Bucket // maybe make map?
 	highestLvl        int
@@ -45,6 +47,16 @@ func (bm *BucketManager) InsertTable(table *SSTable) {
 	if bm.shouldCompact(levelToAppend) {
 		bm.compact(levelToAppend)
 	}
+}
+
+func (bm *BucketManager) RetrieveKey(key string) (string, error) {
+	// start at highest level first
+	for lvl := bm.highestLvl; lvl > 0; lvl-- {
+		for _, table := range bm.buckets[lvl].tables {
+			return table.Get(key)
+		}
+	}
+	return "<!not_found>", utils.ErrKeyNotFound
 }
 
 func (bm *BucketManager) compact(level int) {
