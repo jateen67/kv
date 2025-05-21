@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -38,6 +39,13 @@ func NewDiskStore() (*DiskStore, error) {
 	}
 	ds.wal = logFile
 	return ds, err
+}
+
+func NewDiskStoreDistributed(numOfNodes int) *Cluster {
+	cluster := Cluster{}
+	cluster.initNodes(numOfNodes)
+
+	return &cluster
 }
 
 func (ds *DiskStore) Get(key string) (string, error) {
@@ -123,6 +131,10 @@ func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 		return err
 	}
 	return nil
+}
+
+func (ds *DiskStore) LengthOfMemtable() {
+	fmt.Println(len(ds.memtable.data.Keys()))
 }
 
 func (ds *DiskStore) FlushMemtable() {
