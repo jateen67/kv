@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jateen67/kv/proto"
 	"github.com/jateen67/kv/utils"
 )
 
@@ -50,6 +51,12 @@ func NewDiskStoreDistributed(numOfNodes int) *Cluster {
 	cluster.initNodes(numOfNodes)
 
 	return &cluster
+}
+
+func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) {
+	rec := convertProtoRecordToStoreRecord(record)
+	ds.memtable.Set(&record.Key, rec)
+	fmt.Printf("stored proto record with key = %s into memtable", rec.Key)
 }
 
 func (ds *DiskStore) Get(key string) (string, error) {
