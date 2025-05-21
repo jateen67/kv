@@ -12,7 +12,7 @@ import (
 type DiskStore struct {
 	memtable           *Memtable
 	wal                *os.File
-	buckets            []Bucket
+	bucketManager      *BucketManager
 	immutableMemtables []Memtable
 }
 
@@ -27,7 +27,7 @@ const (
 const FlushSizeThreshold = 3_000
 
 func NewDiskStore() (*DiskStore, error) {
-	ds := &DiskStore{memtable: NewMemtable()}
+	ds := &DiskStore{memtable: NewMemtable(), bucketManager: InitBucketManager()}
 	logFile, err := os.OpenFile("../log/wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
@@ -43,16 +43,6 @@ func (ds *DiskStore) Get(key string) (string, error) {
 		return record.Value, nil
 	} else if !errors.Is(err, utils.ErrKeyNotFound) {
 		return "<!>", err
-	}
-
-	for i := 0; i < len(ds.buckets); i++ {
-		for j := 0; j < len(ds.buckets[i].tables); j++ {
-			value, err := ds.buckets[i].tables[j].Get(key)
-			if errors.Is(err, utils.ErrKeyNotWithinTable) {
-				continue
-			}
-			return value, err
-		}
 	}
 
 	return "<!not_found>", utils.ErrKeyNotFound
@@ -143,21 +133,14 @@ func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 	return nil
 }
 
-var counter int = 0
-
 func (ds *DiskStore) FlushMemtable() {
 	for i := range ds.immutableMemtables {
-		counter++
 		sstable, err := ds.immutableMemtables[i].Flush("storage")
 		if err != nil {
 			panic(err)
 		}
 
-		if len(ds.buckets) == 0 {
-			ds.buckets = append(ds.buckets, *InitBucket(sstable))
-		} else {
-			ds.buckets[0].AppendTableToBucket(sstable)
-		}
+		ds.bucketManager.InsertTable(sstable)
 		ds.immutableMemtables = ds.immutableMemtables[:i] // basically removing a "queued" memtable since its flushed
 	}
 }

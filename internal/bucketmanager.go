@@ -11,29 +11,39 @@ type BucketManager struct {
 func InitBucketManager() *BucketManager {
 	manager := &BucketManager{
 		buckets:           make(map[int]*Bucket),
-		highestLvl:        0,
+		highestLvl:        1,
 		minTableThreshold: 4,
 		maxTableThreshold: 12,
 	}
-	manager.buckets[0] = InitEmptyBucket()
+	manager.buckets[1] = InitEmptyBucket()
 	return manager
 }
 
 func (bm *BucketManager) InsertTable(table *SSTable) {
-	var lvlToAppend int
-	for currLvl, bucket := range bm.buckets {
-		lvlToAppend = currLvl + calculateLevel(*bucket, table)
-		_, ok := bm.buckets[lvlToAppend]
-		if !ok {
-			bm.buckets[lvlToAppend] = InitEmptyBucket()
+	var levelToAppend = 1
+
+	for currLvl := bm.highestLvl; currLvl > 0; currLvl-- {
+		bkt := bm.buckets[currLvl]
+
+		calculatedLevelReturn := calculateLevel(*bkt, table)
+		levelToAppend = currLvl + calculatedLevelReturn
+
+		if calculatedLevelReturn == -1 {
+			continue
+		}
+
+		if calculatedLevelReturn == 0 {
+			bm.buckets[currLvl].AppendTableToBucket(table)
+		} else { // calculatedLevelReturn == 1
+			bm.buckets[levelToAppend] = InitEmptyBucket()
+			bm.buckets[levelToAppend].AppendTableToBucket(table)
 			bm.highestLvl++
 		}
-		bm.buckets[lvlToAppend].AppendTableToBucket(table)
 		break
 	}
 
-	if bm.shouldCompact(lvlToAppend) {
-		bm.compact(lvlToAppend)
+	if bm.shouldCompact(levelToAppend) {
+		bm.compact(levelToAppend)
 	}
 }
 
@@ -53,10 +63,6 @@ func (bm *BucketManager) shouldCompact(level int) bool {
 }
 
 func calculateLevel(bucket Bucket, table *SSTable) int {
-	if table.totalSize < bucket.minTableSize {
-		return -1
-	}
-
 	lowerSizeThreshold := uint32(bucket.bucketLow * float32(bucket.avgBucketSize))   // 50% lower than avg size
 	higherSizeThreshold := uint32(bucket.bucketHigh * float32(bucket.avgBucketSize)) // 50% higher than avg size
 

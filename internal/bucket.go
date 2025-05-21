@@ -22,10 +22,11 @@ const DefaultTableSizeInBytes uint32 = 3_000
 
 func InitBucket(table *SSTable) *Bucket {
 	bucket := &Bucket{
-		minTableSize: DefaultTableSizeInBytes,
-		bucketLow:    0.5,
-		bucketHigh:   1.5,
-		tables:       []SSTable{*table},
+		minTableSize:  DefaultTableSizeInBytes,
+		avgBucketSize: DefaultTableSizeInBytes,
+		bucketLow:     0.5,
+		bucketHigh:    1.5,
+		tables:        []SSTable{},
 	}
 	bucket.calculateAvgBucketSize()
 	return bucket
@@ -73,10 +74,7 @@ func (b *Bucket) calculateAvgBucketSize() {
 }
 
 func (b *Bucket) NeedsCompaction(minNumTables, maxNumTables int) bool {
-	if len(b.tables) >= minNumTables && len(b.tables) <= maxNumTables {
-		return true
-	}
-	return false
+	return len(b.tables) >= minNumTables && len(b.tables) <= maxNumTables
 }
 
 func (b *Bucket) TriggerCompaction() *SSTable {
@@ -143,7 +141,7 @@ func (b *Bucket) TriggerCompaction() *SSTable {
 	// once the new merged table gets created, add it to a new bucket
 	mergedSSTable, _ := InitSSTableOnDisk("storage", finalSortedRun)
 	// now we need to delete the old sstables from disk to free up space
-	deleteOldSSTables(b.tables)
+	deleteOldSSTables(&b.tables)
 	return mergedSSTable
 }
 
@@ -194,9 +192,9 @@ func removeOutdatedEntires(sortedRun *[]Record) {
 	}
 }
 
-func deleteOldSSTables(tables []SSTable) error {
-	for i := range tables {
-		files := []string{tables[i].dataFile.Name(), tables[i].indexFile.Name(), tables[i].bloomFilter.file.Name()}
+func deleteOldSSTables(tables *[]SSTable) error {
+	for i := range *tables {
+		files := []string{(*tables)[i].dataFile.Name(), (*tables)[i].indexFile.Name(), (*tables)[i].bloomFilter.file.Name()}
 
 		for _, file := range files {
 			if err := os.Remove(file); err != nil {
@@ -204,6 +202,6 @@ func deleteOldSSTables(tables []SSTable) error {
 			}
 		}
 	}
-	tables = []SSTable{} // empty the slice
+	*tables = []SSTable{} // empty the slice
 	return nil
 }
