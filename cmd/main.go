@@ -4,10 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"math/rand"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/jateen67/kv/internal"
 )
@@ -20,10 +18,8 @@ func main() {
 		"\t- ctrl+c                  : exit\n" +
 		"\t- help                    : show this message"
 
-	store, err := internal.NewDiskStore()
-	if err != nil {
-		panic(err)
-	}
+	store, _ := internal.NewDiskStore()
+
 	fmt.Println(commands)
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -64,23 +60,5 @@ func main() {
 		case "help":
 			fmt.Println("\n" + commands)
 		}
-
 	}
-}
-
-func generateRandomEntry(store map[string]string) {
-	key := generateRandomString(10)
-	colors := []string{"red", "green", "blue", "yellow", "orange", "purple", "pink", "brown", "black", "white"}
-	color := colors[rand.Intn(len(colors))]
-	store[key] = color
-}
-
-func generateRandomString(length int) string {
-	rand.Seed(time.Now().UnixNano())
-	chars := []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-	b := make([]rune, length)
-	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
-	}
-	return string(b)
 }
