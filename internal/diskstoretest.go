@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-var epoch = 1_000
-
 func BenchmarkDiskStore_Put(b *testing.B) {
 	store, _ := newStore(1)
 	val := "val"

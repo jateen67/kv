@@ -156,7 +156,7 @@ func (c *Cluster) Delete(key string) error {
 func (c *Cluster) PrintDiagnostics() {
 	fmt.Println("DIAGNOSTICS:")
 	for _, v := range c.Nodes {
-		fmt.Printf(v.ID + " @ address " + v.Addr + " , num keys: ")
+		fmt.Printf("%s", v.ID+" @ address "+v.Addr+" , num keys: ")
 		v.Store.LengthOfMemtable()
 	}
 }
