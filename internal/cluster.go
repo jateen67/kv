@@ -57,6 +57,7 @@ func (c *Cluster) initNodes(numOfNodes int) {
 }
 
 func (c *Cluster) AddNode() {
+	fmt.Println("adding new node @ address", currentNodePort)
 	store, _ := NewDiskStore()
 	node := Node{
 		ID:    fmt.Sprintf("node-%d", nodeCounter),
@@ -74,12 +75,14 @@ func (c *Cluster) AddNode() {
 }
 
 func (c *Cluster) RemoveNode(addr string) {
+	addr = fmt.Sprintf(":%s", addr)
 	_, ok := c.Nodes[addr]
 	if ok {
 		c.hashRing = c.hashRing.RemoveNode(addr)
 		c.rebalance()
 		c.Nodes[addr].server.GracefulStop()
 		delete(c.Nodes, addr)
+		fmt.Printf("node @ addr %s successfully deleted", addr)
 	} else {
 		fmt.Printf("node @ addr %s not found", addr)
 	}
@@ -91,7 +94,7 @@ func (c *Cluster) Open() {
 	clusterService := http.NewClusterService(defaultPort, c)
 	clusterService.Start()
 
-	fmt.Println("HTTP server started successfully")
+	fmt.Println("HTTP server started successfully @ port", defaultPort)
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
 
@@ -136,7 +139,7 @@ func (c *Cluster) Delete(key string) error {
 	node, ok := c.Nodes[nodeAddr]
 
 	if ok {
-		fmt.Printf("deleted @ node addr = %s\n", nodeAddr)
+		fmt.Printf("deleted %s @ node addr = %s\n", key, nodeAddr)
 		return node.Store.Delete(key)
 	}
 
@@ -151,6 +154,8 @@ func (c *Cluster) PrintDiagnostics() {
 	}
 }
 
+// meant to keep track of every single group of records that needs to be migrated
+// srcNode ":11000" -> destNode ":11000" : []Record{rec1,rec2,...}
 type dataMigrationAccumulator struct {
 	data map[string]map[string][]Record
 }
