@@ -17,7 +17,7 @@ const (
 	DATA_FILE_EXTENSION      string = ".data"
 	INDEX_FILE_EXTENSION     string = ".index"
 	BLOOM_FILE_EXTENSION     string = ".bloom"
-	SPARSE_INDEX_SAMPLE_SIZE int    = 100
+	SPARSE_INDEX_SAMPLE_SIZE int    = 1000
 )
 
 var ssTableCounter uint32
@@ -86,7 +86,7 @@ func writeEntriesToSST(entries *[]Record, table *SSTable) {
 	table.minKey = (*entries)[0].Key
 	table.maxKey = (*entries)[len(*entries)-1].Key
 
-	// * every 100th key will be put into the sparse index
+	// * every 1000th key will be put into the sparse index
 	for i := range *entries {
 		table.totalSize += (*entries)[i].TotalSize
 		if i%SPARSE_INDEX_SAMPLE_SIZE == 0 {
