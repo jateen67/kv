@@ -5,6 +5,6 @@ import (
 )
 
 func main() {
-	c := internal.NewDiskStoreDistributed(5)
+	c := internal.NewCluster(5)
 	c.Open()
 }

@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -15,7 +14,7 @@ import (
 type DiskStore struct {
 	mu                 sync.Mutex
 	memtable           *Memtable
-	wal                *os.File
+	wal                *writeAheadLog
 	bucketManager      *BucketManager
 	immutableMemtables []Memtable
 }
@@ -30,27 +29,26 @@ const (
 
 const FlushSizeThreshold = 1024 * 1024 * 256
 
-// start a single-node store
-func NewDiskStore() (*DiskStore, error) {
+// NewCluster starts up a cluster of N nodes (stores), internally calls the newStore method per node
+func NewCluster(numOfNodes uint32) *Cluster {
+	cluster := Cluster{}
+	cluster.initNodes(numOfNodes)
+	return &cluster
+}
+
+// newStore starts up a single-node KV store
+func newStore(nodeNum uint32) (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable(), bucketManager: InitBucketManager()}
 	err := os.MkdirAll("log", 0755)
 	if err != nil {
 		return nil, err
 	}
-	logFile, err := os.OpenFile("log/wal.log", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	logFile, err := os.OpenFile(fmt.Sprintf("../log/wal-%d.log", nodeNum), os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}
-	ds.wal = logFile
+	ds.wal = &writeAheadLog{file: logFile}
 	return ds, err
-}
-
-// start up a cluster of N nodes
-func NewDiskStoreDistributed(numOfNodes int) *Cluster {
-	cluster := Cluster{}
-	cluster.initNodes(numOfNodes)
-
-	return &cluster
 }
 
 func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) {
@@ -63,7 +61,7 @@ func (ds *DiskStore) Get(key string) (string, error) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 	// log 'GET' operation first
-	//ds.appendOperationToWAL(GET, &Record{Key: key})
+	ds.wal.appendWALOperation(GET, &Record{Key: key})
 
 	record, err := ds.memtable.Get(&key)
 	// if not found in memtable search in sstable
@@ -103,9 +101,8 @@ func (ds *DiskStore) Set(key *string, value *string) error {
 	record.Header.CheckSum = record.CalculateChecksum()
 
 	ds.memtable.Set(key, record)
-	// TODO: Batch WAL appends to improve performance, constant disk writes are too expensive
-	// ds.appendOperationToWAL(PUT, record)
-
+	// Batch WAL appends to improve performance, constant disk writes are too expensive
+	ds.wal.appendWALOperation(SET, record)
 	// Automatically flush when memtable reaches certain threshold
 	if ds.memtable.totalSize >= FlushSizeThreshold {
 		ds.immutableMemtables = append(ds.immutableMemtables, *deepCopyMemtable(ds.memtable))
@@ -136,7 +133,7 @@ func (ds *DiskStore) Delete(key string) error {
 	deletionRecord.CalculateChecksum()
 
 	ds.memtable.Set(&key, &deletionRecord)
-	ds.appendOperationToWAL(DELETE, &deletionRecord)
+	ds.wal.appendWALOperation(DELETE, &deletionRecord)
 
 	return nil
 }
@@ -180,18 +177,4 @@ func deepCopyMemtable(memtable *Memtable) *Memtable {
 func (ds *DiskStore) Close() bool {
 	//TODO implement
 	return true
-}
-
-func (ds *DiskStore) appendOperationToWAL(op Operation, record *Record) error {
-	buf := new(bytes.Buffer)
-	// Store operation as only 1 byte (only WAL entries will have this extra byte)
-	buf.WriteByte(byte(op))
-
-	// encode the entire key, value entry
-	if encodeErr := record.EncodeKV(buf); encodeErr != nil {
-		return utils.ErrEncodingKVFailed
-	}
-
-	// store in WAL
-	return writeToFile(buf.Bytes(), ds.wal)
 }
