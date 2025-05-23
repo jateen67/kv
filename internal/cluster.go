@@ -13,12 +13,14 @@ import (
 	"github.com/jateen67/kv/http"
 	"github.com/jateen67/kv/proto"
 	"github.com/serialx/hashring"
+	"google.golang.org/grpc"
 )
 
 type Node struct {
-	ID    string
-	Addr  string
-	Store *DiskStore
+	server *grpc.Server
+	ID     string
+	Addr   string
+	Store  *DiskStore
 }
 
 type Cluster struct {
@@ -44,7 +46,7 @@ func (c *Cluster) initNodes(numOfNodes int) {
 		}
 
 		c.Nodes[node.Addr] = &node
-		StartGRPCServer(node.Addr, &node)
+		node.server = StartGRPCServer(node.Addr, &node)
 		atomic.AddUint32(&currentNodePort, 1)
 		atomic.AddUint32(&nodeCounter, 1)
 		nodeAddrs = append(nodeAddrs, node.Addr)
@@ -62,7 +64,7 @@ func (c *Cluster) AddNode() {
 		Store: store,
 	}
 	c.Nodes[node.Addr] = &node
-	StartGRPCServer(node.Addr, &node)
+	node.server = StartGRPCServer(node.Addr, &node)
 	atomic.AddUint32(&nodeCounter, 1)
 	atomic.AddUint32(&currentNodePort, 1)
 
@@ -74,7 +76,10 @@ func (c *Cluster) AddNode() {
 func (c *Cluster) RemoveNode(addr string) {
 	_, ok := c.Nodes[addr]
 	if ok {
-		c.hashRing.RemoveNode(addr)
+		c.hashRing = c.hashRing.RemoveNode(addr)
+		c.rebalance()
+		c.Nodes[addr].server.GracefulStop()
+		delete(c.Nodes, addr)
 	} else {
 		fmt.Printf("node @ addr %s not found", addr)
 	}
@@ -111,7 +116,6 @@ func (c *Cluster) Get(key string) (string, error) {
 		fmt.Printf("found @ node addr = %s\n", nodeAddr)
 		return node.Store.Get(key)
 	}
-
 	return "", nil
 }
 
