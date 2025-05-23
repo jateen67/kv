@@ -58,3 +58,15 @@ func generateRandomString(length int) string {
 	}
 	return string(b)
 }
+
+func generateRandomEntry(store map[string]string) {
+	// Generate a random string for the key
+	key := generateRandomString(10)
+
+	// Generate a random color from a predefined list
+	colors := []string{"red", "green", "blue", "yellow", "orange", "purple", "pink", "brown", "black", "white"}
+	color := colors[rand.Intn(len(colors))]
+
+	// Store the key-value pair in the map
+	store[key] = color
+}
