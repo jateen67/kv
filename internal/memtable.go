@@ -39,6 +39,17 @@ func (m *Memtable) Set(key *string, value *Record) {
 	m.totalSize += value.TotalSize
 }
 
+func (m *Memtable) GetAllKVPairs() map[string]Record {
+	kvPairs := make(map[string]Record)
+
+	for _, k := range m.data.Keys() {
+		val, _ := m.data.Get(k)
+		kvPairs[k.(string)] = val.(Record)
+	}
+
+	return kvPairs
+}
+
 func (m *Memtable) Flush(dir string) *SSTable {
 	sortedEntries := m.returnAllRecordsInSortedOrder()
 	return InitSSTableOnDisk(dir, castToRecordSlice(&sortedEntries))
