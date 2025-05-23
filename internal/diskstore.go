@@ -58,6 +58,9 @@ func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) {
 }
 
 func (ds *DiskStore) Get(key string) (string, error) {
+	if ds == nil {
+		return "<!>", fmt.Errorf("Disk store is not initialized")
+	}
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 	// log 'GET' operation first
@@ -75,8 +78,15 @@ func (ds *DiskStore) Get(key string) (string, error) {
 }
 
 func (ds *DiskStore) Set(key *string, value *string) error {
+	if ds == nil {
+		return fmt.Errorf("Disk store is not initialized")
+	}
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
+
+	if ds.memtable == nil {
+		return fmt.Errorf("memtable is not initialized")
+	}
 
 	if len(*key) == 0 {
 		return errors.New("set() error: key empty")
@@ -113,6 +123,9 @@ func (ds *DiskStore) Set(key *string, value *string) error {
 }
 
 func (ds *DiskStore) Delete(key string) error {
+	if ds == nil {
+		return fmt.Errorf("Disk store is not initialized")
+	}
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
