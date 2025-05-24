@@ -4,7 +4,7 @@ This is a distributed LSM tree key-value store built with Go and gRPC, based on 
 
 # How to Use
 
-Make sure you have [https://grpc.io/docs/languages/go/quickstart/](gRPC) set up beforehand. <br/>
+Make sure you have [gRPC](https://grpc.io/docs/languages/go/quickstart) set up beforehand. <br/>
 Then, from the root directory, run `go run /cmd/main.go`. <br/></br>
 This will run a cluster with 5 nodes. The number of nodes can be easily changed in `cmd/main.go`.<br/></br>
 When running the cluster, an HTTP server will open on port `8080`. It can be used to get, set, or delete keys. The nodes are hosted on ports `11000`, `11001`, etc.
@@ -70,3 +70,44 @@ This will result in all the operations being printed, including some lines that 
 ```
 curl -XPOST localhost:8080/remove-node/<node_port_number>
 ```
+
+# Architecture
+
+![LSM Architecture](extra/lsm.png)
+
+## Memtable
+
+A memtable is an in-memory cache in which incoming writes are stored temporarily before they are flushed to disk (SSTable). In this sense, writes are batched, which minimizes the number of total disk writes, ultimately improving performance.
+
+When flushing to the SSTable, we want the data to be sorted alphabetically by key. The solution is to implement the memtable as a red-black tree, which supports O(log(n)) data retrieval, insertion, and deletion.
+
+## SSTable
+
+An SSTable (Sorted String Table) is used for storing sorted key-value pairs such that retrieving data from it can be done efficently.
+
+**Components:**
+
+- Data file: sorted key-value pairs
+- Sparse index file: stores a subset of the keys and their positions in the data file
+- Bloom filter: space-efficient, probabilistic data structure that tests whether a key is a member of the SSTable
+
+Each SSTable is represented by:
+
+- <sst_num>.data
+- <sst_num>.index
+- <sst_num>.bloom
+
+Upon key lookup, the database first checks the memtable. If it doesn't exist, we check the SSTables on disk:
+
+- Using the bloom filter, check if a key may exist in the SSTable
+- If so, use binary search + sparse indexes to find the max lower bound of the target key
+- Scan every key-value pair starting from that bound position until either 1) the key is found or 2) we scan the last entry
+- Repeat until target key is found
+
+## Compaction
+
+[Size-tiered compaction](https://cassandra.apache.org/doc/4.1/cassandra/operating/compaction/stcs.html) is used to improve writing performance.
+
+## Write-Ahead-Log
+
+Improves durability by serving as a crash recovery mechanism. For each operation, important information about the operation (what the operation is, what data was involved in the operation, etc.) is appended to a .log file. This can then be used to reconstruct the tree during crash recovery.
