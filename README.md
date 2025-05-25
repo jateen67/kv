@@ -38,7 +38,7 @@ To add additional nodes and actually see the data redistribution in action, we c
 ```
 curl -XPOST localhost:8080/key -d '{
     "song1": "ohms", "song2": "song for the deaf", "song3": "around the fur",
-    "song4": "world in my eyes", "song5": "no one knows", "song6": "be quiet and drive",
+    "song4": "pink maggit", "song5": "no one knows", "song6": "be quiet and drive",
     "song7": "up in arms", "song8": "straight jacket fitting", "song9": "better living through chemistry",
     "song10": "serve the servants", "song11": "everlong", "song12": "risk",
     "song13": "ceremony", "song14": "blue dress", "song15": "in my head",
@@ -73,7 +73,7 @@ curl -XPOST localhost:8080/remove-node/<node_port_number>
 
 # Architecture
 
-![LSM Architecture](extra/lsm.png)
+![LSM architecture](img/lsm-archi.png)
 
 ## Memtable
 
@@ -111,3 +111,20 @@ Upon key lookup, the database first checks the memtable. If it doesn't exist, we
 ## Write-Ahead-Log
 
 Improves durability by serving as a crash recovery mechanism. For each operation, important information about the operation (what the operation is, what data was involved in the operation, etc.) is appended to a .log file. This can then be used to reconstruct the tree during crash recovery.
+
+# Complete Tree
+
+Combination of Memtables and SSTables, which form an in-memory and disk component, respectively, which prioritize write speeds
+
+The following operations are supported:
+
+- Get(key)
+- Set(key, value)
+- Delete(key)
+
+# Distributed Architecture
+
+Each node is a self-contained key-value store that contains a subset of the overall data, or in other words, a shard. When a key-value pair is inserted, it goes through a routing layer that utilizes [consistent hashing](https://en.wikipedia.org/wiki/Consistent_hashing) and is then routed to the correct node. [gRPC](https://grpc.io/) is used for inter-node communication, which is helpful for things like data rebalancing (happens when a node is added/removed). Each node is wrapped in a gRPC server to accept incoming requests, and gRPC clients are spawned only when data migration is needed.
+
+A high-level overview of the overall design:
+![Overall architecture](img/archi.png)
