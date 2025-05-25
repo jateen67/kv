@@ -128,3 +128,25 @@ Each node is a self-contained key-value store that contains a subset of the over
 
 A high-level overview of the overall design:
 ![Overall architecture](img/archi.png)
+
+# Benchmarks
+
+### Full Tree
+
+- Set: insert 1,000,000 distinct kv pairs to the tree
+- Get: get 1 key from an SSTable w/ 1,000,000 kv pairs
+
+```go
+BenchmarkDiskStore_Set-12    	 1000000	     9741 ns/op	         104463 ops/s
+BenchmarkDiskStore_Get-12    	13266362	    77.81 ns/op        12846083 ops/s
+```
+
+### Memtable
+
+- Set: insert 1,000,000 distinct kv pairs to the memtable
+- Get: get 1 key from a memtable w/ 1,000,000 kv pairs
+
+```go
+BenchmarkMemtable_Set-12    	  1000000	      9607 ns/op	    104080 ops/s
+BenchmarkMemtable_Get-12    	 11267596	     105.5 ns/op	   9464849 ops/s
+```
