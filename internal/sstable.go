@@ -32,10 +32,10 @@ type SSTable struct {
 	minKey      string
 	maxKey      string
 	totalSize   uint32
-	sparseKeys  []sparseIndex
+	sparseKeys  []*sparseIndex
 }
 
-func InitSSTableOnDisk(nodeId string, directory string, entries []Record) (*SSTable, error) {
+func InitSSTableOnDisk(nodeId string, directory string, entries []*Record) (*SSTable, error) {
 	atomic.AddUint32(&ssTableCounter, 1)
 	table := &SSTable{
 		nodeId:     nodeId,
@@ -95,7 +95,7 @@ type sparseIndex struct {
 	byteOffset uint32
 }
 
-func writeEntriesToSST(entries []Record, table *SSTable) error {
+func writeEntriesToSST(entries []*Record, table *SSTable) error {
 	buf := new(bytes.Buffer)
 	var byteOffsetCounter uint32
 
@@ -107,7 +107,7 @@ func writeEntriesToSST(entries []Record, table *SSTable) error {
 	for i := range entries {
 		table.totalSize += entries[i].TotalSize
 		if i%SPARSE_INDEX_SAMPLE_SIZE == 0 {
-			table.sparseKeys = append(table.sparseKeys, sparseIndex{
+			table.sparseKeys = append(table.sparseKeys, &sparseIndex{
 				keySize:    entries[i].Header.KeySize,
 				key:        entries[i].Key,
 				byteOffset: byteOffsetCounter,
@@ -140,7 +140,7 @@ func writeEntriesToSST(entries []Record, table *SSTable) error {
 	return nil
 }
 
-func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) error {
+func populateSparseIndexFile(indices []*sparseIndex, indexFile *os.File) error {
 	// encode and write to index file
 	buf := new(bytes.Buffer)
 	for i := range indices {
@@ -163,7 +163,7 @@ func populateSparseIndexFile(indices []sparseIndex, indexFile *os.File) error {
 	return nil
 }
 
-func populateBloomFilter(entries []Record, bloomFilter *BloomFilter) error {
+func populateBloomFilter(entries []*Record, bloomFilter *BloomFilter) error {
 	for i := range entries {
 		err := bloomFilter.Add(entries[i].Key)
 		if err != nil {

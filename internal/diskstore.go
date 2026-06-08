@@ -88,7 +88,7 @@ func (ds *DiskStore) Get(key string) (string, error) {
 		return "<!>", err
 	}
 
-	return ds.bucketManager.RetrieveKey(&key)
+	return ds.bucketManager.RetrieveKey(key)
 }
 
 func (ds *DiskStore) Set(key string, value string) error {
@@ -201,8 +201,13 @@ func (ds *DiskStore) LengthOfMemtable() {
 
 func (ds *DiskStore) FlushMemtable() error {
 	for i := range ds.immutableMemtables {
-		sstable := ds.immutableMemtables[i].Flush("storage")
-		err := ds.bucketManager.InsertTable(sstable)
+		sstable, err := ds.immutableMemtables[i].Flush("storage")
+		if err != nil {
+			ds.immutableMemtables = ds.immutableMemtables[i:]
+			return fmt.Errorf("flush memtable at index %d: %w", i, err)
+		}
+
+		err = ds.bucketManager.InsertTable(sstable)
 		if err != nil {
 			// Retain remaining memtables upon error so they can be still be flushed later
 			ds.immutableMemtables = ds.immutableMemtables[i:]

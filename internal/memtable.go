@@ -25,42 +25,49 @@ func NewMemtable(nodeId string) *Memtable {
 	}
 }
 
-func (m *Memtable) Get(key string) (Record, error) {
+func (m *Memtable) Get(key string) (*Record, error) {
 	val, found := m.data.Get(key)
 	if !found {
-		return Record{}, utils.ErrKeyNotFound
+		return nil, utils.ErrKeyNotFound
 	}
-	return val.(Record), nil
+	return val.(*Record), nil
 }
 
 func (m *Memtable) Set(key string, value *Record) {
 	m.data.Put(key, value)
+	// TODO: duplicate keys could inflate size
 	m.totalSize += value.TotalSize
 }
 
-func (m *Memtable) GetAllKVPairs() map[string]Record {
-	kvPairs := make(map[string]Record)
+func (m *Memtable) GetAllKVPairs() map[string]*Record {
+	kvPairs := make(map[string]*Record, m.data.Size())
 
-	for _, k := range m.data.Keys() {
-		val, _ := m.data.Get(k)
-		kvPairs[k.(string)] = val.(Record)
+	iter := m.data.Iterator()
+	for iter.Next() {
+		kvPairs[iter.Key().(string)] = iter.Value().(*Record)
 	}
 
 	return kvPairs
 }
 
-func (m *Memtable) Flush(dir string) *SSTable {
+func (m *Memtable) Flush(dir string) (*SSTable, error) {
 	sortedEntries := m.returnAllRecordsInSortedOrder()
-	table, err := InitSSTableOnDisk(m.nodeId, dir, castToRecordSlice(&sortedEntries))
+	table, err := InitSSTableOnDisk(m.nodeId, dir, sortedEntries)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("flush memtable to disk: %w", err)
 	}
 
-	return table
+	return table, nil
 }
 
-func (m *Memtable) returnAllRecordsInSortedOrder() []any {
-	return inorderRBT(m.data.Root, make([]any, 0))
+func (m *Memtable) returnAllRecordsInSortedOrder() []*Record {
+	records := make([]*Record, 0, m.data.Size())
+	it := m.data.Iterator()
+	for it.Next() {
+		records = append(records, it.Value().(*Record))
+	}
+
+	return records
 }
 
 func castToRecordSlice(interfaceSlice *[]any) []Record {
@@ -73,15 +80,6 @@ func castToRecordSlice(interfaceSlice *[]any) []Record {
 		recordSlice[i] = record
 	}
 	return recordSlice
-}
-
-func inorderRBT(node *rbt.Node, data []interface{}) []interface{} {
-	if node != nil {
-		data = inorderRBT(node.Left, data)
-		data = append(data, node.Value)
-		data = inorderRBT(node.Right, data)
-	}
-	return data
 }
 
 func (m *Memtable) clear() {
