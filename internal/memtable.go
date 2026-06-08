@@ -61,7 +61,7 @@ func (m *Memtable) returnAllRecordsInSortedOrder() []any {
 	return inorderRBT(m.data.Root, make([]any, 0))
 }
 
-func castToRecordSlice(interfaceSlice *[]any) *[]Record {
+func castToRecordSlice(interfaceSlice *[]any) []Record {
 	recordSlice := make([]Record, len(*interfaceSlice))
 	for i, iface := range *interfaceSlice {
 		record, ok := iface.(Record)
@@ -70,7 +70,7 @@ func castToRecordSlice(interfaceSlice *[]any) *[]Record {
 		}
 		recordSlice[i] = record
 	}
-	return &recordSlice
+	return recordSlice
 }
 
 func inorderRBT(node *rbt.Node, data []interface{}) []interface{} {
