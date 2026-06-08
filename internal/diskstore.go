@@ -51,10 +51,26 @@ func newStore(nodeId string) (*DiskStore, error) {
 	return ds, err
 }
 
-func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) {
+func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) error {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
 	rec := convertProtoRecordToStoreRecord(record)
-	ds.memtable.Set(&record.Key, rec)
-	fmt.Printf("stored proto record with key = %s into memtable", rec.Key)
+	ds.memtable.Set(rec.Key, rec)
+
+	if err := ds.wal.appendWALOperation(SET, rec); err != nil {
+		return fmt.Errorf("append to WAL: %w", err)
+	}
+
+	if ds.memtable.totalSize >= FlushSizeThreshold {
+		ds.immutableMemtables = append(ds.immutableMemtables, *ds.memtable)
+		ds.memtable = NewMemtable(ds.memtable.nodeId)
+		if err := ds.FlushMemtable(); err != nil {
+			return fmt.Errorf("flush memtable: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func (ds *DiskStore) Get(key string) (string, error) {
@@ -63,13 +79,8 @@ func (ds *DiskStore) Get(key string) (string, error) {
 	}
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
-	// log 'GET' operation first
-	err := ds.wal.appendWALOperation(GET, &Record{Key: key})
-	if err != nil {
-		return "", err
-	}
 
-	record, err := ds.memtable.Get(&key)
+	record, err := ds.memtable.Get(key)
 	// if not found in memtable search in sstable
 	if err == nil {
 		return record.Value, nil
@@ -80,7 +91,7 @@ func (ds *DiskStore) Get(key string) (string, error) {
 	return ds.bucketManager.RetrieveKey(&key)
 }
 
-func (ds *DiskStore) Set(key *string, value *string) error {
+func (ds *DiskStore) Set(key string, value string) error {
 	if ds == nil {
 		return fmt.Errorf("disk store is not initialized")
 	}
@@ -91,10 +102,10 @@ func (ds *DiskStore) Set(key *string, value *string) error {
 		return fmt.Errorf("memtable is not initialized")
 	}
 
-	if len(*key) == 0 {
+	if len(key) == 0 {
 		return errors.New("set() error: key empty")
 	}
-	if len(*value) == 0 {
+	if len(value) == 0 {
 		return errors.New("set() error: value empty")
 	}
 
@@ -102,13 +113,13 @@ func (ds *DiskStore) Set(key *string, value *string) error {
 		CheckSum:  0,
 		Tombstone: 0,
 		TimeStamp: uint32(time.Now().Unix()),
-		KeySize:   uint32(len(*key)),
-		ValueSize: uint32(len(*value)),
+		KeySize:   uint32(len(key)),
+		ValueSize: uint32(len(value)),
 	}
 	record := &Record{
 		Header:    header,
-		Key:       *key,
-		Value:     *value,
+		Key:       key,
+		Value:     value,
 		TotalSize: headerSize + header.KeySize + header.ValueSize,
 	}
 	cs, err := record.CalculateChecksum()
@@ -127,9 +138,12 @@ func (ds *DiskStore) Set(key *string, value *string) error {
 
 	// Automatically flush when memtable reaches certain threshold
 	if ds.memtable.totalSize >= FlushSizeThreshold {
-		ds.immutableMemtables = append(ds.immutableMemtables, *deepCopyMemtable(ds.memtable))
-		ds.memtable.clear()
-		ds.FlushMemtable()
+		// store shallow copy of the memtable's struct values
+		ds.immutableMemtables = append(ds.immutableMemtables, *ds.memtable)
+		ds.memtable = NewMemtable(ds.memtable.nodeId)
+		if err := ds.FlushMemtable(); err != nil {
+			return fmt.Errorf("flush memtable: %w", err)
+		}
 	}
 	return nil
 }
@@ -155,12 +169,13 @@ func (ds *DiskStore) Delete(key string) error {
 		Value:     value,
 		TotalSize: headerSize + header.KeySize + header.ValueSize,
 	}
-	_, err := deletionRecord.CalculateChecksum()
+	var err error
+	deletionRecord.Header.CheckSum, err = deletionRecord.CalculateChecksum()
 	if err != nil {
 		return err
 	}
 
-	ds.memtable.Set(&key, &deletionRecord)
+	ds.memtable.Set(key, &deletionRecord)
 	err = ds.wal.appendWALOperation(DELETE, &deletionRecord)
 	if err != nil {
 		return err
@@ -184,15 +199,20 @@ func (ds *DiskStore) LengthOfMemtable() {
 	fmt.Println(len(ds.memtable.data.Keys()))
 }
 
-func (ds *DiskStore) FlushMemtable() {
+func (ds *DiskStore) FlushMemtable() error {
 	for i := range ds.immutableMemtables {
 		sstable := ds.immutableMemtables[i].Flush("storage")
 		err := ds.bucketManager.InsertTable(sstable)
 		if err != nil {
-			return
+			// Retain remaining memtables upon error so they can be still be flushed later
+			ds.immutableMemtables = ds.immutableMemtables[i:]
+			return fmt.Errorf("flush memtable at index %d: %w", i, err)
 		}
-		ds.immutableMemtables = ds.immutableMemtables[:i] // basically removing a "queued" memtable since its flushed
 	}
+
+	// By this point all memtables were successfully flushed, so clear the slice
+	ds.immutableMemtables = ds.immutableMemtables[:0]
+	return nil
 }
 
 func deepCopyMemtable(memtable *Memtable) *Memtable {
@@ -208,7 +228,9 @@ func deepCopyMemtable(memtable *Memtable) *Memtable {
 	return deepCopy
 }
 
-func (ds *DiskStore) Close() bool {
+func (ds *DiskStore) Close() error {
 	//TODO implement
-	return true
+	return errors.Join(
+		ds.wal.file.Close(),
+	)
 }

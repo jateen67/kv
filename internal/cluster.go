@@ -140,7 +140,7 @@ func (c *Cluster) Set(key, value string) error {
 	node, ok := c.Nodes[nodeAddr]
 
 	if ok {
-		return node.Store.Set(&key, &value)
+		return node.Store.Set(key, value)
 	}
 	return nil
 }
