@@ -92,21 +92,22 @@ var defaultPort = ":8080"
 
 func (c *Cluster) Open() {
 	clusterService := http.NewClusterService(defaultPort, c)
-	clusterService.Start()
+	err := clusterService.Start()
+	if err != nil {
+		return
+	}
 
 	fmt.Println("HTTP server started successfully @ port", defaultPort)
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
 
 	// Block until one of the signals above is received
-	select {
-	case <-signalCh:
-		c.PrintDiagnostics()
-		log.Println("signal received, shutting down...")
-		err := clusterService.Close()
-		if err != nil {
-			fmt.Println(err)
-		}
+	<-signalCh
+	c.PrintDiagnostics()
+	log.Println("signal received, shutting down...")
+	err = clusterService.Close()
+	if err != nil {
+		fmt.Println(err)
 	}
 }
 
@@ -223,7 +224,12 @@ func (c *Cluster) rebalance() {
 
 func (c *Cluster) transferDataBetweenNodes(srcNodeAddr string, destNodeServerAddr string, data *[]Record) {
 	client, conn := StartGRPCClient(destNodeServerAddr)
-	defer conn.Close()
+	defer func(conn *grpc.ClientConn) {
+		err := conn.Close()
+		if err != nil {
+			return
+		}
+	}(conn)
 
 	kvPairs := convertRecordsToProtoKVPairs(data)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

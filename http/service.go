@@ -68,7 +68,11 @@ func (s *Service) Start() error {
 }
 
 func (s *Service) Close() error {
-	s.ln.Close()
+	err := s.ln.Close()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -94,13 +98,23 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleNodeRemoval(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		io.WriteString(w, "err: must be POST method")
+		_, err := io.WriteString(w, "err: must be POST method")
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		
 		return
 	}
 
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) != 3 {
-		io.WriteString(w, "err: missing token")
+		_, err := io.WriteString(w, "err: missing token")
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
 		return
 	}
 
@@ -144,7 +158,11 @@ func (s *Service) handleKeyRequest(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		io.WriteString(w, val)
+		_, err = io.WriteString(w, val)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
 	case "DELETE":
 		k := getKey()

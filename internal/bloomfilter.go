@@ -37,21 +37,29 @@ func (bf *BloomFilter) initBitArray() {
 	bf.bitSet = make([]bool, bf.bitSetSize)
 }
 
-func (bf *BloomFilter) Add(key string) {
+func (bf *BloomFilter) Add(key string) error {
 	// hash the key n times, and store it into the bits array
-	for _, hash := range bf.hashes {
-		hash.Reset()
-		hash.Write([]byte(key))
-		hashValue := hash.Sum64() % bf.bitSetSize
+	for _, hash64 := range bf.hashes {
+		hash64.Reset()
+		_, err := hash64.Write([]byte(key))
+		if err != nil {
+			return err
+		}
+		hashValue := hash64.Sum64() % bf.bitSetSize
 		bf.bitSet[hashValue] = true
 	}
+
+	return nil
 }
 
 func (bf *BloomFilter) MightContain(key string) bool {
 	// ! Bloom filter is probabilistic, so there's a chance to get false positives
 	for _, hasher := range bf.hashes {
 		hasher.Reset()
-		hasher.Write([]byte(key))
+		_, err := hasher.Write([]byte(key))
+		if err != nil {
+			return false
+		}
 		hashValue := hasher.Sum64() % bf.bitSetSize
 		if !bf.bitSet[hashValue] {
 			return false

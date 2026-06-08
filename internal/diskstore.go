@@ -64,7 +64,10 @@ func (ds *DiskStore) Get(key string) (string, error) {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 	// log 'GET' operation first
-	ds.wal.appendWALOperation(GET, &Record{Key: key})
+	err := ds.wal.appendWALOperation(GET, &Record{Key: key})
+	if err != nil {
+		return "", err
+	}
 
 	record, err := ds.memtable.Get(&key)
 	// if not found in memtable search in sstable
@@ -108,11 +111,20 @@ func (ds *DiskStore) Set(key *string, value *string) error {
 		Value:     *value,
 		TotalSize: headerSize + header.KeySize + header.ValueSize,
 	}
-	record.Header.CheckSum = record.CalculateChecksum()
+	cs, err := record.CalculateChecksum()
+	if err != nil {
+		return err
+	}
+
+	record.Header.CheckSum = cs
 
 	ds.memtable.Set(key, record)
 	// Batch WAL appends to improve performance, constant disk writes are too expensive
-	ds.wal.appendWALOperation(SET, record)
+	err = ds.wal.appendWALOperation(SET, record)
+	if err != nil {
+		return err
+	}
+
 	// Automatically flush when memtable reaches certain threshold
 	if ds.memtable.totalSize >= FlushSizeThreshold {
 		ds.immutableMemtables = append(ds.immutableMemtables, *deepCopyMemtable(ds.memtable))
@@ -143,10 +155,16 @@ func (ds *DiskStore) Delete(key string) error {
 		Value:     value,
 		TotalSize: headerSize + header.KeySize + header.ValueSize,
 	}
-	deletionRecord.CalculateChecksum()
+	_, err := deletionRecord.CalculateChecksum()
+	if err != nil {
+		return err
+	}
 
 	ds.memtable.Set(&key, &deletionRecord)
-	ds.wal.appendWALOperation(DELETE, &deletionRecord)
+	err = ds.wal.appendWALOperation(DELETE, &deletionRecord)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -169,7 +187,10 @@ func (ds *DiskStore) LengthOfMemtable() {
 func (ds *DiskStore) FlushMemtable() {
 	for i := range ds.immutableMemtables {
 		sstable := ds.immutableMemtables[i].Flush("storage")
-		ds.bucketManager.InsertTable(sstable)
+		err := ds.bucketManager.InsertTable(sstable)
+		if err != nil {
+			return
+		}
 		ds.immutableMemtables = ds.immutableMemtables[:i] // basically removing a "queued" memtable since its flushed
 	}
 }

@@ -49,7 +49,12 @@ func (m *Memtable) GetAllKVPairs() map[string]Record {
 
 func (m *Memtable) Flush(dir string) *SSTable {
 	sortedEntries := m.returnAllRecordsInSortedOrder()
-	return InitSSTableOnDisk(dir, castToRecordSlice(&sortedEntries))
+	table, err := InitSSTableOnDisk(dir, castToRecordSlice(&sortedEntries))
+	if err != nil {
+		panic(err)
+	}
+
+	return table
 }
 
 func (m *Memtable) returnAllRecordsInSortedOrder() []any {
