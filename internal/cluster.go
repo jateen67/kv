@@ -38,9 +38,11 @@ func (c *Cluster) initNodes(numOfNodes uint32) {
 	c.accumulator = &dataMigrationAccumulator{}
 
 	for i := 0; i < int(numOfNodes); i++ {
-		store, _ := newStore(nodeCounter)
+		nodeId := fmt.Sprintf("node-%d", nodeCounter)
+		store, _ := newStore(nodeId)
+
 		node := Node{
-			ID:    fmt.Sprintf("node-%d", nodeCounter),
+			ID:    nodeId,
 			Addr:  fmt.Sprintf(":%d", currentNodePort),
 			Store: store,
 		}
@@ -58,7 +60,8 @@ func (c *Cluster) initNodes(numOfNodes uint32) {
 
 func (c *Cluster) AddNode() {
 	fmt.Println("adding new node @ address", currentNodePort)
-	store, _ := newStore(nodeCounter)
+	nodeId := fmt.Sprintf("node-%d", nodeCounter)
+	store, _ := newStore(nodeId)
 	node := Node{
 		ID:    fmt.Sprintf("node-%d", nodeCounter),
 		Addr:  fmt.Sprintf(":%d", currentNodePort),

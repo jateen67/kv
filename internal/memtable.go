@@ -12,12 +12,14 @@ Red-Black tree as memtable -- will replace original hash table
 */
 
 type Memtable struct {
+	nodeId    string
 	data      *rbt.Tree
 	totalSize uint32
 }
 
-func NewMemtable() *Memtable {
+func NewMemtable(nodeId string) *Memtable {
 	return &Memtable{
+		nodeId,
 		rbt.NewWithStringComparator(),
 		0,
 	}
@@ -49,7 +51,7 @@ func (m *Memtable) GetAllKVPairs() map[string]Record {
 
 func (m *Memtable) Flush(dir string) *SSTable {
 	sortedEntries := m.returnAllRecordsInSortedOrder()
-	table, err := InitSSTableOnDisk(dir, castToRecordSlice(&sortedEntries))
+	table, err := InitSSTableOnDisk(m.nodeId, dir, castToRecordSlice(&sortedEntries))
 	if err != nil {
 		panic(err)
 	}
