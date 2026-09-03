@@ -186,11 +186,11 @@ func (ds *DiskStore) Delete(key string) error {
 
 func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 	if _, err := file.Write(data); err != nil {
-		return err
+		return fmt.Errorf("write file: %w", err)
 	}
 	// file consistency very complex (comp310)
 	if err := file.Sync(); err != nil {
-		return err
+		return fmt.Errorf("sync file: %w", err)
 	}
 	return nil
 }

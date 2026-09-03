@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bufio"
 	"cmp"
 	"container/heap"
 	"errors"
@@ -74,6 +75,11 @@ func (b *Bucket) AppendTableToBucket(table *SSTable) {
 }
 
 func (b *Bucket) calculateAvgBucketSize() {
+	if len(b.tables) == 0 {
+		b.avgBucketSize = DefaultTableSizeInBytes
+		return
+	}
+
 	var sum uint32 = 0
 	for i := range b.tables {
 		sum += b.tables[i].totalSize
@@ -86,64 +92,51 @@ func (b *Bucket) NeedsCompaction(minNumTables, maxNumTables int) bool {
 }
 
 func (b *Bucket) TriggerCompaction() (*SSTable, error) {
-	var allSortedRuns [][]Record
+	var allSortedRuns [][]*Record
 
 	for i := range b.tables {
-		var currSortedRun []Record
-		var currOffset uint32
-
 		// Set seek to 0 for every table otherwise the seek position will be at the end of each file by default
-		// I assume because of previous reading done on said files?
-		_, err := b.tables[i].dataFile.Seek(int64(currOffset), 0)
-		if err != nil {
-			return nil, err
+		if _, err := b.tables[i].dataFile.Seek(0, io.SeekStart); err != nil {
+			return nil, fmt.Errorf("error seeking to start of sstable %d: %w", i, err)
 		}
 
+		reader := bufio.NewReader(b.tables[i].dataFile)
+
+		var currSortedRun []*Record
+		headerBuf := make([]byte, headerSize)
+
 		for {
-			currEntry := make([]byte, headerSize)
-			_, err := io.ReadFull(b.tables[i].dataFile, currEntry)
-			if errors.Is(err, io.EOF) {
-				break
+			if _, err := io.ReadFull(reader, headerBuf); err != nil {
+				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+					break
+				}
+				return nil, fmt.Errorf("read header from sstable %d: %w", i, err)
 			}
 
 			h := &Header{}
-			err = h.decodeHeader(currEntry)
-			if err != nil {
-				return nil, err
+			if err := h.decodeHeader(headerBuf); err != nil {
+				return nil, fmt.Errorf("decode header from sstable %d: %w", i, err)
 			}
 
 			// move the cursor so we can read the rest of the record
-			currOffset += headerSize
-			_, err = b.tables[i].dataFile.Seek(int64(currOffset), 0)
-			if err != nil {
-				return nil, err
+			// Read in the key-value after the header (cursor naturally moves)
+			kvBuf := make([]byte, h.KeySize+h.ValueSize)
+			if _, err := io.ReadFull(reader, kvBuf); err != nil {
+				return nil, fmt.Errorf("read key-value from sstable %d: %w", i, err)
 			}
-			// set up []byte for the rest of the record
-			currRecord := make([]byte, h.KeySize+h.ValueSize)
-			if _, err := io.ReadFull(b.tables[i].dataFile, currRecord); err != nil {
-				fmt.Println("READFULL ERR:", err)
-				break
-			}
-			// append both []byte together in order to decode as a whole
-			currEntry = append(currEntry, currRecord...) // full size of the record
+
+			// Append the header and kv together in order to decode as a whole
 			r := &Record{}
-			err = r.DecodeKV(currEntry)
-			if err != nil {
-				return nil, err
+			if err := r.DecodeKV(append(headerBuf, kvBuf...)); err != nil {
+				return nil, fmt.Errorf("decode record from sstable %d: %w", i, err)
 			}
 
-			currSortedRun = append(currSortedRun, *r)
-
-			currOffset += r.Header.KeySize + r.Header.ValueSize
-			_, err = b.tables[i].dataFile.Seek(int64(currOffset), 0)
-			if err != nil {
-				return nil, err
-			}
+			currSortedRun = append(currSortedRun, r) // store pointer, no dereference
 		}
 		allSortedRuns = append(allSortedRuns, currSortedRun)
 	}
 
-	// * now we have all our sorted runs
+	// * Push all records into the min-heap for merging
 	h := MinRecordHeap{}
 	for i := range allSortedRuns {
 		for j := range allSortedRuns[i] {
@@ -152,55 +145,51 @@ func (b *Bucket) TriggerCompaction() (*SSTable, error) {
 	}
 
 	// now that they're all in a heap, we need to throw it into 1 big sstable
-	finalSortedRun := make([]*Record, 0)
+	finalSortedRun := make([]*Record, 0, h.Len())
 	for h.Len() > 0 {
 		ele := heap.Pop(&h)
 		finalSortedRun = append(finalSortedRun, ele.(*Record))
 	}
 
-	filterAndDeleteTombstones(finalSortedRun)
-	removeOutdatedEntires(finalSortedRun)
+	finalSortedRun = filterAndDeleteTombstones(finalSortedRun)
+	finalSortedRun = removeOutdatedEntries(finalSortedRun)
 
 	// once the new merged table gets created, add it to a new bucket
 	mergedSSTable, err := InitSSTableOnDisk(b.tables[0].nodeId, "storage", finalSortedRun)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not create merged sstable: %w", err)
 	}
 
 	// ! now we need to delete the old sstables from disk to free up space
 	err = deleteOldSSTables(b.tables)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not delete old sstables: %w", err)
 	}
+	b.tables = b.tables[:0]
 
 	return mergedSSTable, nil
 }
 
-func filterAndDeleteTombstones(sortedRun []*Record) {
-	var collectedTombstones []string
-
-	// collect all tombstones to delete
-	for i := range sortedRun {
-		if sortedRun[i].Header.Tombstone == 1 {
-			collectedTombstones = append(collectedTombstones, sortedRun[i].Key)
+// removes all records whose key appears as a tombstone and returns the filtered slice
+func filterAndDeleteTombstones(sortedRun []*Record) []*Record {
+	tombstones := make(map[string]struct{})
+	for _, r := range sortedRun {
+		if r.Header.Tombstone == 1 {
+			tombstones[r.Key] = struct{}{}
 		}
 	}
 
-	// now look at every key in collectedTombstones and delete it from the sorted run
-	for i := 0; i < len(sortedRun); {
-		if slices.Contains(collectedTombstones, sortedRun[i].Key) {
-			if i < len(sortedRun)-1 {
-				sortedRun = slices.Delete(sortedRun, i, i+1)
-			} else {
-				sortedRun = sortedRun[:len(sortedRun)-1]
-			}
-		} else {
-			i++
+	result := sortedRun[:0]
+	for _, r := range sortedRun {
+		if _, isTombstone := tombstones[r.Key]; !isTombstone {
+			result = append(result, r)
 		}
 	}
+
+	return result
 }
 
-func removeOutdatedEntires(sortedRun []*Record) {
+func removeOutdatedEntries(sortedRun []*Record) []*Record {
 	// take every entry -> append to a map, if value for a given map key is > 1,
 	// then sort the value (which will be a slice) & delete all values except the last 1 in the overall slice
 
@@ -216,24 +205,33 @@ func removeOutdatedEntires(sortedRun []*Record) {
 				return cmp.Compare(a.Header.TimeStamp, b.Header.TimeStamp)
 			})
 
+			// remove all but the most recent entry from the sorted run
 			for i := 0; i < len(v)-1; i++ {
 				idx := slices.Index(sortedRun, v[i])
-				sortedRun = slices.Delete(sortedRun, idx, idx+1)
+				if idx != -1 {
+					sortedRun = slices.Delete(sortedRun, idx, idx+1)
+				}
 			}
 		}
 	}
+
+	return sortedRun
 }
 
 func deleteOldSSTables(tables []*SSTable) error {
 	for i := range tables {
 		files := []string{tables[i].dataFile.Name(), tables[i].indexFile.Name(), tables[i].bloomFilter.file.Name()}
 
+		if err := tables[i].Close(); err != nil {
+			return fmt.Errorf("error closing sstable before deletion: %w", err)
+		}
+
 		for _, file := range files {
 			if err := os.Remove(file); err != nil {
-				return err
+				return fmt.Errorf("error deleting sstable file %s: %w", file, err)
 			}
 		}
 	}
-	tables = []*SSTable{} // empty the slice
+
 	return nil
 }

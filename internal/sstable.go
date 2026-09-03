@@ -189,10 +189,10 @@ func populateBloomFilter(entries []*Record, bloomFilter *BloomFilter) error {
 
 func writeToFile(data []byte, file *os.File) error {
 	if _, err := file.Write(data); err != nil {
-		return err
+		return fmt.Errorf("write file: %w", err)
 	}
 	if err := file.Sync(); err != nil {
-		return err
+		return fmt.Errorf("sync file: %w", err)
 	}
 	return nil
 }
