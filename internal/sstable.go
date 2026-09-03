@@ -127,14 +127,14 @@ func writeEntriesToSST(entries []*Record, table *SSTable) error {
 	// Set up sparse index
 	err := populateSparseIndexFile(table.sparseKeys, table.indexFile)
 	if err != nil {
-		return fmt.Errorf("populate sparse index: %w", err)
+		return fmt.Errorf("error populating sparse index: %w", err)
 	}
 
 	// Set up + populate bloom filter
 	table.bloomFilter.InitBloomFilterAttrs(uint32(len(entries)))
 	err = populateBloomFilter(entries, table.bloomFilter)
 	if err != nil {
-		return fmt.Errorf("populate bloom filter: %w", err)
+		return fmt.Errorf("error populating bloom filter: %w", err)
 	}
 
 	return nil
@@ -157,7 +157,7 @@ func populateSparseIndexFile(indices []*sparseIndex, indexFile *os.File) error {
 	}
 
 	if err := writeToFile(buf.Bytes(), indexFile); err != nil {
-		return fmt.Errorf("write to indexfile err: %w", err)
+		return fmt.Errorf("error writing to indexfile err: %w", err)
 	}
 
 	return nil
@@ -167,7 +167,7 @@ func populateBloomFilter(entries []*Record, bloomFilter *BloomFilter) error {
 	for i := range entries {
 		err := bloomFilter.Add(entries[i].Key)
 		if err != nil {
-			return fmt.Errorf("bloom filter add key %q: %w", entries[i].Key, err)
+			return fmt.Errorf("error: adding key %q to bloom filter: %w", entries[i].Key, err)
 		}
 	}
 
@@ -181,7 +181,7 @@ func populateBloomFilter(entries []*Record, bloomFilter *BloomFilter) error {
 	}
 
 	if err := writeToFile(bfBytes, bloomFilter.file); err != nil {
-		return fmt.Errorf("write bloom filter file: %w", err)
+		return fmt.Errorf("error writing bloom filter file: %w", err)
 	}
 
 	return nil
@@ -189,10 +189,10 @@ func populateBloomFilter(entries []*Record, bloomFilter *BloomFilter) error {
 
 func writeToFile(data []byte, file *os.File) error {
 	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("write file: %w", err)
+		return fmt.Errorf("error writing file: %w", err)
 	}
 	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync file: %w", err)
+		return fmt.Errorf("error syncing file: %w", err)
 	}
 	return nil
 }
@@ -208,7 +208,7 @@ func (sst *SSTable) Get(key string) (string, error) {
 	// seek to best candidate offset from the sparse index
 	startOffset := int64(sst.sparseKeys[sst.getCandidateByteOffsetIndex(key)].byteOffset)
 	if _, err := sst.dataFile.Seek(startOffset, io.SeekStart); err != nil {
-		return "", fmt.Errorf("seek to sparse index offset: %w", err)
+		return "", fmt.Errorf("error seeking to sparse index offset: %w", err)
 	}
 
 	// Use a buffered reader from the seek point to avoid syscalls per read due to io.ReadFull on the raw *os.File
@@ -222,24 +222,24 @@ func (sst *SSTable) Get(key string) (string, error) {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return "", utils.ErrKeyNotFound
 			}
-			return "", fmt.Errorf("read header: %w", err)
+			return "", fmt.Errorf("error reading header: %w", err)
 		}
 
 		h := &Header{}
 		if err := h.decodeHeader(headerBuf); err != nil {
-			return "", fmt.Errorf("decode header: %w", err)
+			return "", fmt.Errorf("error decoding header: %w", err)
 		}
 
 		// read in the key-value after the header (cursor naturally moves)
 		kvBuf := make([]byte, h.KeySize+h.ValueSize)
 		if _, err := io.ReadFull(reader, kvBuf); err != nil {
-			return "", fmt.Errorf("read key-value: %w", err)
+			return "", fmt.Errorf("error reading key-value: %w", err)
 		}
 
 		// append header and kv together to decode as a whole
 		r := &Record{}
 		if err := r.DecodeKV(append(headerBuf, kvBuf...)); err != nil {
-			return "", fmt.Errorf("decode record: %w", err)
+			return "", fmt.Errorf("error decoding record: %w", err)
 		}
 
 		if r.Key == key {

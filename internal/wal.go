@@ -27,7 +27,8 @@ func (w *writeAheadLog) appendWALOperation(op Operation, record *Record) error {
 	buf.WriteByte(byte(op))
 
 	// encode the entire key, value entry
-	if encodeErr := record.EncodeKV(buf); encodeErr != nil {
+	err := record.EncodeKV(buf)
+	if err != nil {
 		return utils.ErrEncodingKVFailed
 	}
 
@@ -44,8 +45,9 @@ func (w *writeAheadLog) appendWALOperation(op Operation, record *Record) error {
 
 // Flushes the current batch of operations to disk, only called if size reaches WALBatchThreshold
 func (w *writeAheadLog) flushToDisk() error {
-	if logErr := writeToFile(w.opsBatch, w.file); logErr != nil {
-		return logErr
+	err := writeToFile(w.opsBatch, w.file)
+	if err != nil {
+		return err
 	}
 
 	w.clearBatch()

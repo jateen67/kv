@@ -1,6 +1,6 @@
 package internal
 
-type MinRecordHeap []Record
+type MinRecordHeap []*Record
 
 func (h MinRecordHeap) Len() int {
 	return len(h)
@@ -15,7 +15,7 @@ func (h MinRecordHeap) Swap(i, j int) {
 }
 
 func (h *MinRecordHeap) Push(val any) {
-	*h = append(*h, val.(Record))
+	*h = append(*h, val.(*Record))
 }
 
 func (h *MinRecordHeap) Pop() any {

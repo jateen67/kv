@@ -58,15 +58,17 @@ func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) error {
 	rec := convertProtoRecordToStoreRecord(record)
 	ds.memtable.Set(rec.Key, rec)
 
-	if err := ds.wal.appendWALOperation(SET, rec); err != nil {
-		return fmt.Errorf("append to WAL: %w", err)
+	err := ds.wal.appendWALOperation(SET, rec)
+	if err != nil {
+		return fmt.Errorf("error appending to WAL: %w", err)
 	}
 
 	if ds.memtable.totalSize >= FlushSizeThreshold {
 		ds.immutableMemtables = append(ds.immutableMemtables, *ds.memtable)
 		ds.memtable = NewMemtable(ds.memtable.nodeId)
-		if err := ds.FlushMemtable(); err != nil {
-			return fmt.Errorf("flush memtable: %w", err)
+		err := ds.FlushMemtable()
+		if err != nil {
+			return fmt.Errorf("error flushing memtable: %w", err)
 		}
 	}
 
@@ -75,7 +77,7 @@ func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) error {
 
 func (ds *DiskStore) Get(key string) (string, error) {
 	if ds == nil {
-		return "<!>", fmt.Errorf("disk store is not initialized")
+		return "<!>", fmt.Errorf("error: disk store is not initialized")
 	}
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
@@ -93,13 +95,13 @@ func (ds *DiskStore) Get(key string) (string, error) {
 
 func (ds *DiskStore) Set(key string, value string) error {
 	if ds == nil {
-		return fmt.Errorf("disk store is not initialized")
+		return fmt.Errorf("error: disk store is not initialized")
 	}
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
 
 	if ds.memtable == nil {
-		return fmt.Errorf("memtable is not initialized")
+		return fmt.Errorf("error: memtable is not initialized")
 	}
 
 	if len(key) == 0 {
@@ -141,8 +143,9 @@ func (ds *DiskStore) Set(key string, value string) error {
 		// store shallow copy of the memtable's struct values
 		ds.immutableMemtables = append(ds.immutableMemtables, *ds.memtable)
 		ds.memtable = NewMemtable(ds.memtable.nodeId)
-		if err := ds.FlushMemtable(); err != nil {
-			return fmt.Errorf("flush memtable: %w", err)
+		err := ds.FlushMemtable()
+		if err != nil {
+			return fmt.Errorf("error flushing memtable: %w", err)
 		}
 	}
 	return nil
@@ -185,12 +188,14 @@ func (ds *DiskStore) Delete(key string) error {
 }
 
 func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
-	if _, err := file.Write(data); err != nil {
-		return fmt.Errorf("write file: %w", err)
+	_, err := file.Write(data)
+	if err != nil {
+		return fmt.Errorf("error writing file: %w", err)
 	}
 	// file consistency very complex (comp310)
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("sync file: %w", err)
+	err = file.Sync()
+	if err != nil {
+		return fmt.Errorf("error syncing file: %w", err)
 	}
 	return nil
 }
@@ -204,14 +209,14 @@ func (ds *DiskStore) FlushMemtable() error {
 		sstable, err := ds.immutableMemtables[i].Flush("storage")
 		if err != nil {
 			ds.immutableMemtables = ds.immutableMemtables[i:]
-			return fmt.Errorf("flush memtable at index %d: %w", i, err)
+			return fmt.Errorf("error flushing memtable at index %d: %w", i, err)
 		}
 
 		err = ds.bucketManager.InsertTable(sstable)
 		if err != nil {
 			// Retain remaining memtables upon error so they can be still be flushed later
 			ds.immutableMemtables = ds.immutableMemtables[i:]
-			return fmt.Errorf("flush memtable at index %d: %w", i, err)
+			return fmt.Errorf("error flushing memtable at index %d: %w", i, err)
 		}
 	}
 

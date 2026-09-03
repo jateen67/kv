@@ -54,7 +54,7 @@ func (m *Memtable) Flush(dir string) (*SSTable, error) {
 	sortedEntries := m.returnAllRecordsInSortedOrder()
 	table, err := InitSSTableOnDisk(m.nodeId, dir, sortedEntries)
 	if err != nil {
-		return nil, fmt.Errorf("flush memtable to disk: %w", err)
+		return nil, fmt.Errorf("error flushing memtable to disk: %w", err)
 	}
 
 	return table, nil
@@ -75,7 +75,7 @@ func castToRecordSlice(interfaceSlice *[]any) []Record {
 	for i, iface := range *interfaceSlice {
 		record, ok := iface.(Record)
 		if !ok {
-			fmt.Errorf("element %d is not a Record", i)
+			fmt.Errorf("castToRecordSlice() error: element %d is not a Record", i)
 		}
 		recordSlice[i] = record
 	}

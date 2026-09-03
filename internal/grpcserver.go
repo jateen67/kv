@@ -18,34 +18,39 @@ type dataMigrationServer struct {
 
 func (d *dataMigrationServer) MigrateKeyValuePairs(ctx context.Context, req *proto.KeyValueMigrationRequest) (*proto.KeyValueMigrationResponse, error) {
 	fmt.Println(req)
-	var migrationResults []*proto.MigrationResult
+	migrationResults := make([]*proto.MigrationResult, 0, len(req.KvPairs))
+	overallSuccess := true
 
-	for i := range req.KvPairs {
-		fmt.Println("storing data into node at address ", d.underlyingNode.Addr)
-		err := d.underlyingNode.Store.PutRecordFromGRPC(req.KvPairs[i].Record)
+	for _, kv := range req.KvPairs {
+		err := ctx.Err()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error: migration cancelled: %w", err)
 		}
 
-		res := proto.MigrationResult{
-			Key:      req.KvPairs[i].Record.Key,
-			Success:  true,
-			ErrorMsg: "",
+		result := &proto.MigrationResult{Key: kv.Record.Key}
+
+		err = d.underlyingNode.Store.PutRecordFromGRPC(kv.Record)
+		if err != nil {
+			// record the failure but continue -- caller needs to know which pairs succeeded
+			result.Success = false
+			result.ErrorMsg = err.Error()
+			overallSuccess = false
+		} else {
+			result.Success = true
 		}
-		migrationResults = append(migrationResults, &res)
+		migrationResults = append(migrationResults, result)
 	}
 
 	return &proto.KeyValueMigrationResponse{
-		Success:          true,
-		ErrorMsg:         "",
+		Success:          overallSuccess,
 		MigrationResults: migrationResults,
 	}, nil
 }
 
-func StartGRPCServer(addr string, node *Node) *grpc.Server {
+func StartGRPCServer(addr string, node *Node) (*grpc.Server, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		fmt.Println(err)
+		return nil, fmt.Errorf("error listen on port %s: %w", addr, err)
 	}
 
 	server := grpc.NewServer()
@@ -53,11 +58,11 @@ func StartGRPCServer(addr string, node *Node) *grpc.Server {
 	proto.RegisterDataMigrationServiceServer(server, service)
 
 	go func() {
-		fmt.Println("gRPC server started @ port ", addr)
+		log.Printf("gRPC server listening on port %s", addr)
 		err = server.Serve(ln)
 		if err != nil {
-			log.Fatalf("failed to start gRPC server: %v", err)
+			log.Printf("failed to start gRPC server: %v", err)
 		}
 	}()
-	return server
+	return server, nil
 }

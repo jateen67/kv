@@ -96,7 +96,8 @@ func (b *Bucket) TriggerCompaction() (*SSTable, error) {
 
 	for i := range b.tables {
 		// Set seek to 0 for every table otherwise the seek position will be at the end of each file by default
-		if _, err := b.tables[i].dataFile.Seek(0, io.SeekStart); err != nil {
+		_, err := b.tables[i].dataFile.Seek(0, io.SeekStart)
+		if err != nil {
 			return nil, fmt.Errorf("error seeking to start of sstable %d: %w", i, err)
 		}
 
@@ -106,29 +107,33 @@ func (b *Bucket) TriggerCompaction() (*SSTable, error) {
 		headerBuf := make([]byte, headerSize)
 
 		for {
-			if _, err := io.ReadFull(reader, headerBuf); err != nil {
+			_, err := io.ReadFull(reader, headerBuf)
+			if err != nil {
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 					break
 				}
-				return nil, fmt.Errorf("read header from sstable %d: %w", i, err)
+				return nil, fmt.Errorf("error reading header from sstable %d: %w", i, err)
 			}
 
 			h := &Header{}
-			if err := h.decodeHeader(headerBuf); err != nil {
-				return nil, fmt.Errorf("decode header from sstable %d: %w", i, err)
+			err = h.decodeHeader(headerBuf)
+			if err != nil {
+				return nil, fmt.Errorf("error decoding header from sstable %d: %w", i, err)
 			}
 
 			// move the cursor so we can read the rest of the record
 			// Read in the key-value after the header (cursor naturally moves)
 			kvBuf := make([]byte, h.KeySize+h.ValueSize)
-			if _, err := io.ReadFull(reader, kvBuf); err != nil {
-				return nil, fmt.Errorf("read key-value from sstable %d: %w", i, err)
+			_, err = io.ReadFull(reader, kvBuf)
+			if err != nil {
+				return nil, fmt.Errorf("error reading key-value from sstable %d: %w", i, err)
 			}
 
 			// Append the header and kv together in order to decode as a whole
 			r := &Record{}
-			if err := r.DecodeKV(append(headerBuf, kvBuf...)); err != nil {
-				return nil, fmt.Errorf("decode record from sstable %d: %w", i, err)
+			err = r.DecodeKV(append(headerBuf, kvBuf...))
+			if err != nil {
+				return nil, fmt.Errorf("error decoding record from sstable %d: %w", i, err)
 			}
 
 			currSortedRun = append(currSortedRun, r) // store pointer, no dereference
@@ -157,13 +162,13 @@ func (b *Bucket) TriggerCompaction() (*SSTable, error) {
 	// once the new merged table gets created, add it to a new bucket
 	mergedSSTable, err := InitSSTableOnDisk(b.tables[0].nodeId, "storage", finalSortedRun)
 	if err != nil {
-		return nil, fmt.Errorf("could not create merged sstable: %w", err)
+		return nil, fmt.Errorf("error creating merged sstable: %w", err)
 	}
 
 	// ! now we need to delete the old sstables from disk to free up space
 	err = deleteOldSSTables(b.tables)
 	if err != nil {
-		return nil, fmt.Errorf("could not delete old sstables: %w", err)
+		return nil, fmt.Errorf("error deleting old sstables: %w", err)
 	}
 	b.tables = b.tables[:0]
 
@@ -222,12 +227,14 @@ func deleteOldSSTables(tables []*SSTable) error {
 	for i := range tables {
 		files := []string{tables[i].dataFile.Name(), tables[i].indexFile.Name(), tables[i].bloomFilter.file.Name()}
 
-		if err := tables[i].Close(); err != nil {
-			return fmt.Errorf("error closing sstable before deletion: %w", err)
+		err := tables[i].Close()
+		if err != nil {
+			return fmt.Errorf("error losing sstable before deletion: %w", err)
 		}
 
 		for _, file := range files {
-			if err := os.Remove(file); err != nil {
+			err := os.Remove(file)
+			if err != nil {
 				return fmt.Errorf("error deleting sstable file %s: %w", file, err)
 			}
 		}
