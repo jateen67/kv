@@ -70,17 +70,16 @@ func (c *Cluster) initNodes(numOfNodes uint32) {
 	c.hashRing = hashring.New(nodeAddrs)
 }
 
-func (c *Cluster) AddNode() {
+func (c *Cluster) AddNode() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	fmt.Println("adding new node @ address", c.nextNodePort)
+	log.Printf("adding new node on port %d", c.nextNodePort)
 	nodeId := fmt.Sprintf("node-%d", c.nextNodeCounter)
 
 	store, err := newStore(nodeId)
 	if err != nil {
-		log.Printf("failed to create store for node %s: %v", nodeId, err)
-		return
+		return fmt.Errorf("error creating store for node %s: %w", nodeId, err)
 	}
 
 	node := &Node{
@@ -92,9 +91,8 @@ func (c *Cluster) AddNode() {
 	c.Nodes[node.Addr] = node
 	node.server, err = StartGRPCServer(node.Addr, node)
 	if err != nil {
-		log.Printf("error starting gRPC server for node %s: %v", nodeId, err)
 		delete(c.Nodes, node.Addr)
-		return
+		return fmt.Errorf("error starting gRPC server for node %s: %w", nodeId, err)
 	}
 
 	c.nextNodePort++
@@ -102,6 +100,8 @@ func (c *Cluster) AddNode() {
 	// refresh the hash ring w/ new node
 	c.hashRing = c.hashRing.AddNode(node.Addr)
 	c.rebalance()
+
+	return nil
 }
 
 func (c *Cluster) RemoveNode(addr string) {
@@ -149,7 +149,7 @@ func (c *Cluster) Open() {
 	}
 }
 
-func (c *Cluster) Close() {
+func (c *Cluster) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -157,6 +157,8 @@ func (c *Cluster) Close() {
 	for _, node := range c.Nodes {
 		node.server.GracefulStop()
 	}
+
+	return nil
 }
 
 func (c *Cluster) Get(key string) (string, error) {
