@@ -200,6 +200,13 @@ func (ds *DiskStore) writeToFile(data []byte, file *os.File) error {
 	return nil
 }
 
+// used during data migrations/rebalancing, not the same as a Delete opertion
+func (ds *DiskStore) RemoveFromMemtable(key string) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	ds.memtable.Remove(key)
+}
+
 func (ds *DiskStore) LengthOfMemtable() {
 	fmt.Println(len(ds.memtable.data.Keys()))
 }

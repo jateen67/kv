@@ -39,6 +39,14 @@ func (m *Memtable) Set(key string, value *Record) {
 	m.totalSize += value.TotalSize
 }
 
+// used during data migrations/rebalancing, not the same as a Delete opertion
+func (m *Memtable) Remove(key string) {
+	if existing, found := m.data.Get(key); found {
+		m.totalSize -= existing.(*Record).TotalSize
+		m.data.Remove(key)
+	}
+}
+
 func (m *Memtable) GetAllKVPairs() map[string]*Record {
 	kvPairs := make(map[string]*Record, m.data.Size())
 
