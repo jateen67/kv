@@ -86,7 +86,7 @@ func castToRecordSlice(interfaceSlice *[]any) []Record {
 	for i, iface := range *interfaceSlice {
 		record, ok := iface.(Record)
 		if !ok {
-			fmt.Errorf("castToRecordSlice() error: element %d is not a Record", i)
+			_ = fmt.Errorf("castToRecordSlice() error: element %d is not a Record", i)
 		}
 		recordSlice[i] = record
 	}
