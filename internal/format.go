@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 
 	"github.com/jateen67/kv/utils"
@@ -46,27 +47,7 @@ func NewKeyEntry(timestamp, position, totalSize uint32) KeyEntry {
 }
 
 func (h *Header) encodeHeader(buf *bytes.Buffer) error {
-	err := binary.Write(buf, binary.LittleEndian, &h.CheckSum)
-	if err != nil {
-		return utils.ErrEncodingHeaderFailed
-	}
-	
-	err = binary.Write(buf, binary.LittleEndian, &h.Tombstone)
-	if err != nil {
-		return utils.ErrEncodingHeaderFailed
-	}
-	
-	err = binary.Write(buf, binary.LittleEndian, &h.TimeStamp)
-	if err != nil {
-		return utils.ErrEncodingHeaderFailed
-	}
-	
-	err = binary.Write(buf, binary.LittleEndian, &h.KeySize)
-	if err != nil {
-		return utils.ErrEncodingHeaderFailed
-	}
-	
-	err = binary.Write(buf, binary.LittleEndian, &h.ValueSize)
+	err := binary.Write(buf, binary.LittleEndian, h)
 	if err != nil {
 		return utils.ErrEncodingHeaderFailed
 	}
@@ -75,28 +56,11 @@ func (h *Header) encodeHeader(buf *bytes.Buffer) error {
 }
 
 func (h *Header) decodeHeader(buf []byte) error {
-	// must pass in reference b/c go is call by value and won't modify original otherwise
-	_, err := binary.Decode(buf[:4], binary.LittleEndian, &h.CheckSum)
-	if err != nil {
-		return utils.ErrDecodingHeaderFailed
+	if len(buf) < int(headerSize) {
+		return fmt.Errorf("header buffer too short: need %d, got %d", headerSize, len(buf))
 	}
 
-	_, err = binary.Decode(buf[4:5], binary.LittleEndian, &h.Tombstone)
-	if err != nil {
-		return utils.ErrDecodingHeaderFailed
-	}
-
-	_, err = binary.Decode(buf[5:9], binary.LittleEndian, &h.TimeStamp)
-	if err != nil {
-		return utils.ErrDecodingHeaderFailed
-	}
-
-	_, err = binary.Decode(buf[9:13], binary.LittleEndian, &h.KeySize)
-	if err != nil {
-		return utils.ErrDecodingHeaderFailed
-	}
-
-	_, err = binary.Decode(buf[13:17], binary.LittleEndian, &h.ValueSize)
+	_, err := binary.Decode(buf[:headerSize], binary.LittleEndian, h)
 	if err != nil {
 		return utils.ErrDecodingHeaderFailed
 	}
@@ -119,19 +83,29 @@ func (r *Record) EncodeKV(buf *bytes.Buffer) error {
 }
 
 func (r *Record) DecodeKV(buf []byte) error {
+	if len(buf) < int(headerSize) {
+		return fmt.Errorf("buffer too short for header: need %d bytes, got %d", headerSize, len(buf))
+	}
+
 	err := r.Header.decodeHeader(buf[:headerSize])
 	if err != nil {
 		return err
 	}
+
+	required := int(headerSize) + int(r.Header.KeySize) + int(r.Header.ValueSize)
+	if len(buf) < required {
+		return fmt.Errorf("buffer too short for key/value: need %d bytes, got %d", required, len(buf))
+	}
+
 	r.Key = string(buf[headerSize : headerSize+r.Header.KeySize])
 	r.Value = string(buf[headerSize+r.Header.KeySize : headerSize+r.Header.KeySize+r.Header.ValueSize])
-	r.TotalSize = headerSize + r.Header.KeySize + r.Header.ValueSize
+	r.TotalSize = uint32(required)
 	return nil
 }
 
 func (r *Record) CalculateChecksum() (uint32, error) {
 	headerBuf := new(bytes.Buffer)
-	
+
 	err := binary.Write(headerBuf, binary.LittleEndian, &r.Header.Tombstone)
 	if err != nil {
 		return 0, err
@@ -151,7 +125,7 @@ func (r *Record) CalculateChecksum() (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	
+
 	data := append([]byte(r.Key), []byte(r.Value)...)
 	buf := append(headerBuf.Bytes(), data...)
 	return crc32.ChecksumIEEE(buf), nil
