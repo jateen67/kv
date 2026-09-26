@@ -34,8 +34,11 @@ func (m *Memtable) Get(key string) (*Record, error) {
 }
 
 func (m *Memtable) Set(key string, value *Record) {
-	m.data.Put(key, value)
 	// TODO: duplicate keys could inflate size
+	if existing, found := m.data.Get(key); found {
+		m.totalSize -= existing.(*Record).TotalSize
+	}
+	m.data.Put(key, value)
 	m.totalSize += value.TotalSize
 }
 

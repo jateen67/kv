@@ -41,14 +41,24 @@ func newStore(nodeId string) (*DiskStore, error) {
 	ds := &DiskStore{memtable: NewMemtable(nodeId), bucketManager: InitBucketManager()}
 	err := os.MkdirAll("log", 0755)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error creating log directory: %w", err)
 	}
-	logFile, err := os.OpenFile(fmt.Sprintf("../log/wal-%d.log", nodeId), os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	logFile, err := os.OpenFile(fmt.Sprintf("../log/wal-%s.log", nodeId), os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}
-	ds.wal = &writeAheadLog{file: logFile}
-	return ds, err
+
+	ds.wal = newWAL(logFile)
+
+	// replay WAL into memtable before accepting new writes --
+	// recovers any operations that were buffered but not flushed to an SSTable
+	// before the previous process shutdown or crashed
+	err = ds.wal.Recover(ds.memtable)
+	if err != nil {
+		return nil, fmt.Errorf("error during WAL recovery for node %s: %w", nodeId, err)
+	}
+
+	return ds, nil
 }
 
 func (ds *DiskStore) PutRecordFromGRPC(record *proto.Record) error {
@@ -248,6 +258,6 @@ func deepCopyMemtable(memtable *Memtable) *Memtable {
 func (ds *DiskStore) Close() error {
 	//TODO implement
 	return errors.Join(
-		ds.wal.file.Close(),
+		ds.wal.Close(),
 	)
 }
