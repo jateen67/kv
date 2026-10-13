@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -43,7 +44,7 @@ func newStore(nodeId string) (*DiskStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error creating log directory: %w", err)
 	}
-	logFile, err := os.OpenFile(fmt.Sprintf("../log/wal-%s.log", nodeId), os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
+	logFile, err := os.OpenFile(filepath.Join("log", fmt.Sprintf("wal-%s.log", nodeId)), os.O_APPEND|os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}

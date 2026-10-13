@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func setupStore(t *testing.T) *DiskStore {
 	}
 	t.Cleanup(func() {
 		store.Close()
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 	return store
@@ -46,7 +47,12 @@ func setupCluster(t *testing.T, numNodes uint32) *Cluster {
 
 	t.Cleanup(func() {
 		cluster.Close()
-		os.RemoveAll("../log")
+		for _, node := range cluster.Nodes {
+			if err := node.Store.Close(); err != nil {
+				t.Errorf("failed to close store %s: %v", node.ID, err)
+			}
+		}
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 	return cluster
@@ -264,7 +270,10 @@ func TestWAL_RecoverPutOperations(t *testing.T) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		if err := store.Close(); err != nil {
+			t.Errorf("failed to close store: %v", err)
+		}
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -296,6 +305,28 @@ func TestWAL_RecoverPutOperations(t *testing.T) {
 	}
 }
 
+func TestNewStore_CreatesWALInLogDirectory(t *testing.T) {
+	nodeID := fmt.Sprintf("wal-path-test-%d", time.Now().UnixNano())
+	store, err := newStore(nodeID)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+
+	walPath := filepath.Join("log", fmt.Sprintf("wal-%s.log", nodeID))
+	if store.wal.file.Name() != walPath {
+		t.Errorf("expected WAL path %q, got %q", walPath, store.wal.file.Name())
+	}
+
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("failed to close store: %v", err)
+		}
+		if err := os.Remove(walPath); err != nil && !os.IsNotExist(err) {
+			t.Errorf("failed to remove test WAL: %v", err)
+		}
+	})
+}
+
 func TestWAL_RecoverDeleteOperations(t *testing.T) {
 	nodeId := fmt.Sprintf("wal-test-%d", time.Now().UnixNano())
 	store, err := newStore(nodeId)
@@ -303,7 +334,10 @@ func TestWAL_RecoverDeleteOperations(t *testing.T) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		if err := store.Close(); err != nil {
+			t.Errorf("failed to close store: %v", err)
+		}
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -330,7 +364,10 @@ func TestWAL_EmptyFile(t *testing.T) {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		if err := store.Close(); err != nil {
+			t.Errorf("failed to close store: %v", err)
+		}
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -347,7 +384,7 @@ func TestWAL_EmptyFile(t *testing.T) {
 
 func TestCluster_PutAndGet(t *testing.T) {
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -368,7 +405,7 @@ func TestCluster_PutAndGet(t *testing.T) {
 
 func TestCluster_KeysDistributeAcrossNodes(t *testing.T) {
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -402,7 +439,7 @@ func TestCluster_KeysDistributeAcrossNodes(t *testing.T) {
 
 func TestCluster_AddNodeTriggersRebalance(t *testing.T) {
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -438,7 +475,7 @@ func TestCluster_GetFromEmptyCluster(t *testing.T) {
 
 func TestCluster_Delete(t *testing.T) {
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -624,7 +661,7 @@ func TestCluster_StressDistribution(t *testing.T) {
 		t.Skip("skipping stress test in short mode")
 	}
 	t.Cleanup(func() {
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -667,7 +704,7 @@ func BenchmarkDiskStore_Put(b *testing.B) {
 	store, _ := newStore("bench-node")
 	b.Cleanup(func() {
 		store.Close()
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -687,7 +724,7 @@ func BenchmarkDiskStore_Get(b *testing.B) {
 	store, _ := newStore("bench-node")
 	b.Cleanup(func() {
 		store.Close()
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -743,7 +780,7 @@ func BenchmarkCluster_Put(b *testing.B) {
 
 	b.Cleanup(func() {
 		cluster.Close()
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
@@ -763,7 +800,7 @@ func BenchmarkDiskStore_PutParallel(b *testing.B) {
 	store, _ := newStore("bench-parallel")
 	b.Cleanup(func() {
 		store.Close()
-		os.RemoveAll("../log")
+		os.RemoveAll("log")
 		os.RemoveAll("../storage")
 	})
 
