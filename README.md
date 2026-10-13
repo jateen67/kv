@@ -14,7 +14,7 @@ When running the cluster, an HTTP server will open on port `8080`. It can be use
 In another tab, run:
 
 ```
-curl -XPOST localhost:8080/key -d '{"song1": "ohms", "song2": "song for the deaf", "song3": "around the fur"}'
+curl -XPOST localhost:8080/key -d '{"song1": "parabola", "song2": "song for the deaf", "song3": "frogs"}'
 
 curl -XGET localhost:8080/key/song2
 -> song for the deaf
@@ -25,10 +25,13 @@ curl -XDELETE localhost:8080/key/song3
 This will result in the following print statements:
 
 ```
-key = song1 added @ node addr = :11004
-key = song2 added @ node addr = :11001
-key = song3 added @ node addr = :11003
-deleted song3 @ node addr = :11003
+SET key=song1 node=:11000
+SET key=song2 node=:11003
+SET key=song3 node=:11001
+
+GET key=song2 node=:11003
+
+DELETE key=song3 node=:11001
 ```
 
 ### Add additional nodes
@@ -37,23 +40,23 @@ To add additional nodes and actually see the data redistribution in action, we c
 
 ```
 curl -XPOST localhost:8080/key -d '{
-    "song1": "ohms", "song2": "song for the deaf", "song3": "around the fur",
-    "song4": "pink maggit", "song5": "no one knows", "song6": "be quiet and drive",
-    "song7": "up in arms", "song8": "straight jacket fitting", "song9": "better living through chemistry",
-    "song10": "serve the servants", "song11": "everlong", "song12": "risk",
-    "song13": "ceremony", "song14": "blue dress", "song15": "in my head",
-    "song16": "selfless", "song17": "automatic stop", "song18": "7 words",
-    "song19": "tempest", "song20": "pneuma", "song21": "minerva",
-    "song22": "juicebox", "song23": "give it all", "song24": "bored",
-    "song25": "slow animals", "song26": "carnavoyeur", "song27": "paper machete",
+    "song1": "parabola", "song2": "song for the deaf", "song3": "around the frogs",
+    "song4": "pink maggit", "song5": "the way", "song6": "enjoy the silence",
+    "song7": "the modern age", "song8": "straight jacket fitting", "song9": "them bones",
+    "song10": "better living through chemistry", "song11": "everlong", "song12": "my way",
+    "song13": "buddy holly", "song14": "blue dress", "song15": "veridis quo",
+    "song16": "tomorrow", "song17": "the razors apple", "song18": "7 words",
+    "song19": "drive", "song20": "pneuma", "song21": "oahu",
+    "song22": "gold soundz", "song23": "give it all", "song24": "festival song",
+    "song25": "slow animals", "song26": "fortress", "song27": "villains of circumstance",
     "song28": "festival song", "song29": "anything", "song30": "lsf",
-    "song31": "first it giveth", "song32": "song for the dead", "song33": "six shooter",
-    "song34": "do it again", "song35": "gonna leave you", "song36": "go with the flow",
-    "song37": "tomorrow", "song38": "another love song", "song39": "mosquito song",
-    "song40": "976-evil", "song41": "headless", "song42": "radiant city",
-    "song43": "hole in the earth", "song44": "urantia", "song45": "genesis",
-    "song46": "headup", "song47": "this link is dead", "song48": "pompeji",
-    "song49": "rosemary", "song50": "dai the flu"
+    "song31": "first it giveth", "song32": "song for the dead", "song33": "waste",
+    "song34": "windowpane", "song35": "bleak", "song36": "inside out",
+    "song37": "just a kid", "song38": "grind", "song39": "mosquito song",
+    "song40": "over now", "song41": "roots bloody roots", "song42": "easy street",
+    "song43": "hole in the earth", "song44": "halo", "song45": "nutshell",
+    "song46": "headup", "song47": "eulogy", "song48": "disposition",
+    "song49": "billie jean", "song50": "dai the flu"
 }'
 ```
 
@@ -126,27 +129,4 @@ The following operations are supported:
 
 Each node is a self-contained key-value store that contains a subset of the overall data, or in other words, a shard. When a key-value pair is inserted, it goes through a routing layer that utilizes [consistent hashing](https://en.wikipedia.org/wiki/Consistent_hashing) and is then routed to the correct node. [gRPC](https://grpc.io/) is used for inter-node communication, which is helpful for things like data rebalancing (happens when a node is added/removed). Each node is wrapped in a gRPC server to accept incoming requests, and gRPC clients are spawned only when data migration is needed.
 
-A high-level overview of the overall design:
 ![Overall architecture](img/archi.png)
-
-# Benchmarks
-
-### Full Tree
-
-- Set: insert 1,000,000 distinct kv pairs to the tree
-- Get: get 1 key from an SSTable w/ 1,000,000 kv pairs
-
-```go
-BenchmarkDiskStore_Set-12    	 1000000	     9741 ns/op	         104463 ops/s
-BenchmarkDiskStore_Get-12    	13266362	    77.81 ns/op        12846083 ops/s
-```
-
-### Memtable
-
-- Set: insert 1,000,000 distinct kv pairs to the memtable
-- Get: get 1 key from a memtable w/ 1,000,000 kv pairs
-
-```go
-BenchmarkMemtable_Set-12    	  1000000	      9607 ns/op	    104080 ops/s
-BenchmarkMemtable_Get-12    	 11267596	     105.5 ns/op	   9464849 ops/s
-```
